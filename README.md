@@ -29,9 +29,9 @@
 7. [发布文件与校验](docs/07-发布与校验.md)
 
 ## 版本
-基础版本 [openwrt-mt6990-lg6851f](https://github.com/13179415360/openwrt-mt6990-lg6851f)
-本版：**2026-10-15**，OpenWrt mediatek/mt6990，Linux **6.18.44**。
-什么是新的：
+**基础版本 [openwrt-mt6990-lg6851f](https://github.com/13179415360/openwrt-mt6990-lg6851f)
+**本版：**2026-10-15**，OpenWrt mediatek/mt6990，Linux **6.18.44**。
+**什么是新的：
 - 移植了原厂固件的所有硬件加速HNAT/WED功能（蜂窝《=》WIFI；蜂窝《=》有线；有线《=》无线）并加入了 WIFI《=》WIFI（同BISSID）硬件加速。
 - 两个频段的无线设置独立保存；5G 保留 BE/160MHz、固定信道44的配置能力。实际信道、功率仍由硬件、驱动和当地监管约束决定。
 - CPU频率显示及挡位设定（省电/均衡/性能），性能挡位下可拉满2200MHZ，coremark跑分单核7985/四核30167
