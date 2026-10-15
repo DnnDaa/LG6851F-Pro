@@ -4,6 +4,20 @@
 
 **本仓库的解锁路线只有短信注入。** 不收录其他解锁方式。LG6121F 一代、LG6851 非 Pro、NAND/UBI 设备不能使用本项目分区镜像。
 
+## 固件与工具下载
+
+[本版 Release](https://github.com/DnnDaa/LG6851F-Pro/releases/tag/lg6851f-public-20261015) · [全部版本](https://github.com/DnnDaa/LG6851F-Pro/releases)
+
+| 文件 | 下载 |
+|---|---|
+| A 槽网页升级固件 | [sysupgrade.tar.gz](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-a-public-20261015-sysupgrade.tar.gz) |
+| A 槽 MTK 刷机包 | [mtk.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-a-public-20261015-mtk.zip) |
+| Windows 刷机工具与驱动 | [flash-tools.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-windows-flash-tools.zip) |
+| 完整工程源码（保留 Linux 权限和符号链接） | [source.tar.zst](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-public-source-20261015.tar.zst) |
+| SHA256 校验清单 | [SHA256SUMS.txt](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/SHA256SUMS.txt) |
+
+本版标为预发布；请先阅读下方型号要求和安装教程。源码归档与 Release 标签对应，main 分支另补充下载链接和发布说明。
+
 ## 从这里开始
 
 1. [购买后核对型号、批次与文件](docs/01-设备与文件.md)
