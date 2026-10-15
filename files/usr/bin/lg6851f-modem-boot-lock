@@ -1,0 +1,53 @@
+#!/bin/sh
+# One bounded recovery attempt per boot; no reboot or periodic lock writer.
+STATE=/tmp/lg6851f-modem-boot-lock.state
+exec 8>/var/lock/lg6851f-modem-boot-lock.lock
+flock -n 8 || exit 0
+[ -e /tmp/lg6851f-modem-boot-lock.attempted ] && exit 0
+touch /tmp/lg6851f-modem-boot-lock.attempted
+report() { printf 'STATUS=%s\nDETAIL=%s\n' "$1" "$2" > "$STATE.new";mv "$STATE.new" "$STATE"; }
+now_uptime() { local seconds rest;read seconds rest < /proc/uptime;printf '%s' "${seconds%%.*}"; }
+[ "$(uci -q get lg6851f_modem_lock.main.autoapply)" = 1 ] || { report disabled '开机恢复已关闭';exit 0; }
+[ "$(uci -q get lg6851f_modem_lock.main.mode)" = cell ] || { report none '没有需要恢复的小区锁定';exit 0; }
+report waiting '等待原厂模组启动完成'
+deadline=$(($(now_uptime)+240))
+while [ "$(now_uptime)" -lt "$deadline" ];do
+ read up rest < /proc/uptime;up=${up%%.*}
+ if [ "$up" -ge 90 ] && pidof atcid mtk_netagent scd ql_netd ql_ril_service >/dev/null;then
+  ready=1;for name in atcid mtk_netagent scd ql_netd ql_ril_service;do pidof "$name" >/dev/null || ready=0;done
+  if [ "$ready" = 1 ];then
+   state=$(/usr/bin/timeout 4 /bin/ubus call network.interface.modem5g status 2>/dev/null)
+   net_up=$(printf '%s' "$state" | /usr/bin/jsonfilter -e '@.up' 2>/dev/null)
+   net_age=$(printf '%s' "$state" | /usr/bin/jsonfilter -e '@.uptime' 2>/dev/null)
+   case "$net_age" in ''|*[!0-9]*)net_age=0;;esac
+   [ "$net_up" = true ] && [ "$net_age" -ge 30 ] && break
+   ready=0
+  fi
+ fi
+ sleep 5
+done
+[ "${ready:-0}" = 1 ] || { report error '原厂服务未就绪，未重写锁定';exit 1; }
+arfcn=$(uci -q get lg6851f_modem_lock.main.arfcn);pci=$(uci -q get lg6851f_modem_lock.main.pci)
+rat=$(uci -q get lg6851f_modem_lock.main.rat);band=$(uci -q get lg6851f_modem_lock.main.band)
+# Settings may have been changed while waiting for modem startup.
+[ "$(uci -q get lg6851f_modem_lock.main.autoapply)" = 1 ] && [ "$(uci -q get lg6851f_modem_lock.main.mode)" = cell ] || { report disabled '等待期间开机恢复已关闭';exit 0; }
+result= rc=75
+for attempt in 1 2 3 4 5 6;do
+ [ "$(uci -q get lg6851f_modem_lock.main.autoapply)" = 1 ] && [ "$(uci -q get lg6851f_modem_lock.main.mode)" = cell ] || { report disabled '等待期间恢复已关闭';exit 0; }
+ arfcn=$(uci -q get lg6851f_modem_lock.main.arfcn);pci=$(uci -q get lg6851f_modem_lock.main.pci)
+ rat=$(uci -q get lg6851f_modem_lock.main.rat);band=$(uci -q get lg6851f_modem_lock.main.band)
+ result=$(/usr/bin/lg6851f-modem-ui-job start set-cell "$arfcn" "$pci" "$rat" "$band");rc=$?
+ [ "$rc" = 75 ] || break
+ sleep 5
+done
+[ "$rc" = 0 ] || { report error '控制通道忙，未重复提交';exit "$rc"; }
+token=${result#ID=};report applying '正在恢复保存的小区锁定'
+deadline=$(($(now_uptime)+360))
+while [ "$(now_uptime)" -lt "$deadline" ];do
+ id= status=
+ while IFS='=' read -r key value;do case "$key" in ID)id=$value;;STATUS)status=$value;;esac;done < /tmp/lg6851f-modem-ui-job.state
+ [ "$id" = "$token" ] || { report error '任务编号改变，请手动确认';exit 1; }
+ case "$status" in done)report verified '模组提交和当前驻留已确认';exit 0;;error)report error '原厂接口未确认，需检查锁定或手动解除';exit 1;;esac
+ sleep 2
+done
+report error '等待确认超时，不自动重试'

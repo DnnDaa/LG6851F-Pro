@@ -1,0 +1,8 @@
+Default
+BN0_profile_path=/etc/wireless/mediatek/lg6851f24.dat
+BN2_profile_path=/etc/wireless/mediatek/lg6851f5.dat
+E2pAccessMode=4
+TestModeEn=0
+WHNAT=1
+MloV1=0
+WtblDupNum=0

@@ -1,0 +1,8 @@
+#!/bin/sh
+# A saved cell target restores automatically; leave the target itself intact.
+uci -q set lg6851f_modem_lock.main=profile
+uci -q set lg6851f_modem_lock.main.autoapply=1
+uci -q commit lg6851f_modem_lock
+/etc/init.d/lg6851f-modem-boot-lock enable
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* /tmp/luci-modulecache/*
+exit 0

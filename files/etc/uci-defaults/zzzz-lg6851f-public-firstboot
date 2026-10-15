@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+# Preserve user settings on later upgrades; only replace the public placeholders.
+changed=0
+for section in default_radio0 default_radio1; do
+ ssid="$(uci -q get wireless.$section.ssid || true)"
+ case "$ssid" in LG6851F-PUBLIC-*)
+  if [ "$changed" = 0 ]; then
+   secret="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')"
+   [ "${#secret}" = 32 ] || exit 1
+  fi
+  uci set "wireless.$section.key=$secret"
+  uci set "wireless.$section.ssid=LG6851F-${ssid#LG6851F-PUBLIC-}"
+  changed=1
+ ;; esac
+done
+[ "$changed" = 0 ] || uci commit wireless
+exit 0

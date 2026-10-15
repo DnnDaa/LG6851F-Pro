@@ -1,0 +1,18 @@
+{
+  "admin/system/lg6851f-cpufreq": {
+    "title": "CPU",
+    "order": 45,
+    "action": {
+      "type": "view",
+      "path": "system/lg6851f-cpufreq-cards_v20261015_1"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-lg6851f-cpufreq"
+      ],
+      "uci": {
+        "lg6851f-cpufreq": true
+      }
+    }
+  }
+}

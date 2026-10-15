@@ -1,0 +1,56 @@
+#!/bin/sh
+# Job lock is inherited by the worker: concurrent browser sessions cannot
+# overwrite each other's completion or invoke two native control operations.
+STATE=/tmp/lg6851f-modem-ui-job.state
+LOG=/tmp/lg6851f-modem-ui-job.log
+CACHE=/tmp/lg6851f-modem-ui-native.cache
+publish() { printf 'ID=%s\nSTATUS=%s\nCODE=%s\nUPDATED=%s\n' "$token" "$1" "$2" "$(date +%s)" > "$STATE.new" && mv "$STATE.new" "$STATE"; }
+case "$1" in
+ start)
+  shift
+  exec 9>/var/lock/lg6851f-modem-ui-job.lock
+  flock -n 9 || { echo 'ERROR=another modem control job is active';exit 75; }
+  token="$(date +%s)-$$"
+  publish queued 0
+  "$0" run "$token" "$@" > /dev/null 2>&1 < /dev/null &
+  printf 'ID=%s\n' "$token"
+  ;;
+ run)
+  token="$2";shift 2
+  publish running 0
+  trap 'publish error 143; exit 143' TERM INT
+  /usr/bin/timeout 300 /usr/bin/lg6851f-modem-lock "$@" > "$LOG" 2>&1; rc=$?
+  if [ "$rc" -eq 0 ]; then
+   if [ "$1" != get ]; then
+    /usr/bin/lg6851f-modem-lock get > "$CACHE.new" 2>&1; query=$?
+   else
+    cp "$LOG" "$CACHE.new";query=0
+   fi
+   if [ "$query" -eq 0 ] && grep -q 'lte band info' "$CACHE.new"; then
+    mv "$CACHE.new" "$CACHE"
+    
+    case "$1" in
+     set-cell)
+      uci -q set lg6851f_modem_lock.main=profile
+      uci -q set lg6851f_modem_lock.main.mode=cell
+      uci -q set lg6851f_modem_lock.main.autoapply=1
+      uci -q set "lg6851f_modem_lock.main.arfcn=$2"
+      uci -q set "lg6851f_modem_lock.main.pci=$3"
+      uci -q set "lg6851f_modem_lock.main.rat=$4"
+      uci -q set "lg6851f_modem_lock.main.band=$5"
+      uci -q commit lg6851f_modem_lock;;
+     clear-cell|reset-all|reset-bands|apply-bands)
+      uci -q set lg6851f_modem_lock.main.mode=none
+      uci -q commit lg6851f_modem_lock;;
+    esac
+    publish done 0
+   else
+    # A write can succeed while its follow-up query fails. Do not label the
+    # cache current or retry the write automatically.
+    rm -f "$CACHE.new" "$CACHE";publish error 5
+    printf '\nERROR=operation returned, but current state could not be refreshed\n' >> "$LOG"
+   fi
+  else publish error "$rc";fi
+  ;;
+ *) exit 22;;
+esac

@@ -1,0 +1,7 @@
+#!/bin/sh /etc/rc.common
+# Keep diagnostic records while avoiding synchronous verbose serial output.
+START=11
+start() {
+ [ ! -w /sys/module/printk/parameters/ignore_loglevel ] || echo N > /sys/module/printk/parameters/ignore_loglevel
+ sysctl -q -w kernel.printk="1 4 1 7"
+}

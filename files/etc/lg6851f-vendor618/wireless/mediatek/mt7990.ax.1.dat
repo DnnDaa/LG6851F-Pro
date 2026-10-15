@@ -1,0 +1,10 @@
+#The word of "Default" must not be removed
+Default
+BN0_profile_path=/etc/wireless/mediatek/mt7990.ax.b0.dat
+BN1_profile_path=/etc/wireless/mediatek/mt7990.ax.b1.dat
+BN2_profile_path=/etc/wireless/mediatek/mt7990.ax.b2.dat
+E2pAccessMode=4
+TestModeEn=0
+WHNAT=1
+MloV1=0
+WtblDupNum=0

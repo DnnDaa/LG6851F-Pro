@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+
+START=99
+
+start() {
+	local mnt=/tmp/lg6851f-user-data-cleanup source_mount mounted_here=0
+	local saved="$mnt/openwrt-sysupgrade/sysupgrade.tgz"
+
+	[ -b /dev/mmcblk0p46 ] || return 0
+	source_mount="$(awk '$1 == "/dev/mmcblk0p46" && $3 == "ext4" && $4 ~ /(^|,)rw(,|$)/ { print $2; exit }' /proc/mounts)"
+	if [ -n "$source_mount" ]; then
+		mnt="$source_mount"
+		saved="$mnt/openwrt-sysupgrade/sysupgrade.tgz"
+	else
+		mkdir -p "$mnt"
+		mount -o rw,noatime /dev/mmcblk0p46 "$mnt" 2>/dev/null || return 0
+		mounted_here=1
+	fi
+	if [ -f "$saved" ]; then
+		rm -f "$saved"
+		sync
+		logger -t lg6851f-upgrade "preserved configuration restored; persistent backup cleared"
+	fi
+	[ "$mounted_here" = 1 ] && umount "$mnt"
+}

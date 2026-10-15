@@ -1,0 +1,45 @@
+#!/bin/sh
+case "$(cat /sys/devices/system/cpu/online 2>/dev/null)" in
+ 0-3) ;;
+ *) exit 0;;
+esac
+result=0
+pin_irq() {
+ local name="$1" mask="$2" irq
+ for irq in $(awk -v name="$name" '$NF == name {sub(/:$/, "", $1); print $1}' /proc/interrupts); do
+  [ -w "/proc/irq/$irq/smp_affinity" ] || continue
+  printf '%s' "$mask" > "/proc/irq/$irq/smp_affinity" || result=1
+ done
+}
+pin_irq mt7990-wed 2
+pin_irq mt7991-wed 4
+for dev in ra0 rai0; do
+ case "$dev" in ra0) mask=2;; rai0) mask=8;; esac
+ for queue in /sys/class/net/"$dev"/queues/rx-*; do
+  [ -w "$queue/rps_cpus" ] || continue
+  printf '%s' "$mask" > "$queue/rps_cpus" || result=1
+ done
+done
+
+ethtool=$(command -v ethtool)
+[ -n "$ethtool" ] || ethtool=/usr/sbin/ethtool
+if [ -x "$ethtool" ]; then
+ for dev in ra0 rai0 eth0 eth1 br-lan; do
+  [ -d "/sys/class/net/$dev" ] || continue
+  features=$("$ethtool" -k "$dev" 2>/dev/null)
+  feature=$(printf '%s\n' "$features" | grep '^generic-receive-offload:')
+  case "$feature" in
+   *'[fixed]'*|'') ;;
+   *': off'*) "$ethtool" -K "$dev" gro on >/dev/null 2>&1 || result=1;;
+  esac
+  feature=$(printf '%s\n' "$features" | grep '^rx-gro-list:')
+  case "$feature" in
+   *'[fixed]'*|'') ;;
+   *': on'*) "$ethtool" -K "$dev" rx-gro-list off >/dev/null 2>&1 || result=1;;
+  esac
+ done
+else
+ result=1
+fi
+/usr/sbin/lg6851f-local-tcp-fq || result=1
+exit "$result"

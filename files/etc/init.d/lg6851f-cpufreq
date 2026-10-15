@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+START=20
+USE_PROCD=1
+
+start_service() {
+	/usr/sbin/lg6851f-cpu-profile apply
+}
+
+reload_service() {
+	/usr/sbin/lg6851f-cpu-profile apply
+}
+
+service_triggers() {
+	procd_add_reload_trigger lg6851f-cpufreq
+}

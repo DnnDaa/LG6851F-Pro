@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+# Sampling is started on demand by RPC, and exits after the last page closes.
+START=95
+STOP=10
+start() { return 0; }
+stop() {
+ local pid stamp cmd
+ if [ -r /tmp/fiberhomedash.sampler ]; then
+  read -r pid stamp </tmp/fiberhomedash.sampler
+  case "$pid" in ''|*[!0-9]*|0|1) ;; *)
+   cmd="$(tr '\000' ' ' </proc/"$pid"/cmdline 2>/dev/null)"
+   case "$cmd" in *'/usr/share/rpcd/ucode/fiberhomedash sample'*) kill "$pid" 2>/dev/null;; esac
+  ;; esac
+ fi
+ rm -f /tmp/fiberhomedash.sampler /tmp/fiberhomedash.live.json
+}

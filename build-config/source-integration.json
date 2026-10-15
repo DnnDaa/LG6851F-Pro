@@ -1,0 +1,9 @@
+{
+  "runtime": "latest public sanitized runtime files",
+  "vendor_source": "current6.18 port incl local Wi-Fi skb reuse/RX/FQ fixes and WARP TASK_IDLE fix",
+  "cpu_led_sources": "included fullC sources",
+  "feeds": "local snapshots",
+  "private_values_redacted_paths": [],
+  "clean_full_rebuild_executed_in_this_handoff": false,
+  "validation": "source closure,syntax,reference image and hashes; no new full clean rebuild"
+}

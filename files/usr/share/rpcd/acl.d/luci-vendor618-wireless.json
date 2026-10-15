@@ -1,0 +1,16 @@
+{
+  "luci-mod-network-config": {
+    "description": "Vendor wireless status for authorized wireless configuration users",
+    "read": {
+      "ubus": {
+        "network.wireless": [
+          "status"
+        ],
+        "iwinfo": [
+          "info",
+          "assoclist"
+        ]
+      }
+    }
+  }
+}

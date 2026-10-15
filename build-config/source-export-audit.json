@@ -1,0 +1,192 @@
+{
+  "excluded": [],
+  "public_test_keys": [
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/DA_prvk.pem",
+      "sha256": "1a29171880f54e99cd29e32ed643fe8031480cef7146fba931b76b6dfab4ec4e",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/DA_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/EPP_prvk.pem",
+      "sha256": "1a29171880f54e99cd29e32ed643fe8031480cef7146fba931b76b6dfab4ec4e",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/EPP_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/IMAGE_prvk.pem",
+      "sha256": "757e727ea1a52f6b66d101a3b0b003600df9ea0f4b9ef06646ce1958a21692a2",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/IMAGE_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/PRIMARY_DEBUG_prvk.pem",
+      "sha256": "757e727ea1a52f6b66d101a3b0b003600df9ea0f4b9ef06646ce1958a21692a2",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/PRIMARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT2_prvk.pem",
+      "sha256": "93f9862111496769eadb89756c5ce19b65dc2709c05174118ae0cb8874d832c5",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT2_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT3_prvk.pem",
+      "sha256": "0c73be114e72cacf0da5d4285bbfce26557507f7e98bb7d3e76fd9f9b9d6068a",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT3_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT4_prvk.pem",
+      "sha256": "86eb6aec0719e5446de7dd782077724a2dd7aa9d5df1dd588a497e5eef089d3b",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT4_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT_prvk.pem",
+      "sha256": "1a29171880f54e99cd29e32ed643fe8031480cef7146fba931b76b6dfab4ec4e",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/SECONDARY_DEBUG_prvk.pem",
+      "sha256": "757e727ea1a52f6b66d101a3b0b003600df9ea0f4b9ef06646ce1958a21692a2",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/SECONDARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/SLA_prvk.pem",
+      "sha256": "80d640226a254c35c307c89efa95d903393091c931fe2e31f95833056d5b94c2",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/SLA_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/DA_prvk.pem",
+      "sha256": "54f4a98e6fd8cb56ac9b34d24922ec1e1f378cc010934e605e8d71ee97e54731",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/DA_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/EPP_prvk.pem",
+      "sha256": "54f4a98e6fd8cb56ac9b34d24922ec1e1f378cc010934e605e8d71ee97e54731",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/EPP_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/IMAGE_prvk.pem",
+      "sha256": "49e9637a8e068885c78c591aa45e3f11b4734a458d98336fd66c60b021b57f23",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/IMAGE_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/PRIMARY_DEBUG_prvk.pem",
+      "sha256": "1e889863cb06e821742ae6b708a8f808a3661e7860f9e3ae09d3acd809371356",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/PRIMARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT2_prvk.pem",
+      "sha256": "71629eefedb56719bf9362c94b0c10e3e13d96c4c5cb551ebf82c99222b36184",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT2_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT3_prvk.pem",
+      "sha256": "08ca7c5ec3161e006509bb4d78c9b3acd9c5bf79ed9f6a1c06f257b69a8b8653",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT3_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT4_prvk.pem",
+      "sha256": "7b1d39bc05b19bdd6fa51e7bd9d08cadb38adc1f1a5c4d893d5ebcea3def3b96",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT4_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT_prvk.pem",
+      "sha256": "4f8b935afae9618795a53aee21848186e69a0a3c2adb0a73ab0df344ea1e0475",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/ROOT_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/SECONDARY_DEBUG_prvk.pem",
+      "sha256": "7185895b8fb52b416017d3029afd4b844a766746fc72de957a8359ce7ee71bc9",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/SECONDARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/SLA_prvk.pem",
+      "sha256": "519697c56cc6048261180969de155b35f87ac0ad8076a9d69a0ce62dc72f321b",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA3072/SLA_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/DA_prvk.pem",
+      "sha256": "f851b1d771f8bdac77040791898c9a90d69ec9a999a2dcac9cc54828c347a2da",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/DA_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/EPP_prvk.pem",
+      "sha256": "f851b1d771f8bdac77040791898c9a90d69ec9a999a2dcac9cc54828c347a2da",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/EPP_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/IMAGE_prvk.pem",
+      "sha256": "9a5704305567508c37c3fe20c18bcffc0b1d4f1ab04c0663338ac6fb5c8dfdff",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/IMAGE_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/PRIMARY_DEBUG_prvk.pem",
+      "sha256": "5ae1d509d287317f4a40b367a8e10d44cf74c62cb1f956a2e27347800cf796ec",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/PRIMARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT2_prvk.pem",
+      "sha256": "bf9ecc8a0756a361964da9feada8cd197bd1f5e249c4bf5322010cca981e7cc9",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT2_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT3_prvk.pem",
+      "sha256": "54b7a9e0ff3dba285235d6bdceedbd968d4b6c19cb379825e205409b2f0fab36",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT3_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT4_prvk.pem",
+      "sha256": "82c176c33f246c5b58a47cbadc656fd04b94694e9b741a16c0f9ed9b68c87fff",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT4_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT_prvk.pem",
+      "sha256": "088fd26164c423ff3c0cae4de9221c16bb1576776a03f40180d29023d11dfc1b",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/ROOT_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/SECONDARY_DEBUG_prvk.pem",
+      "sha256": "7cd1a637514c0beedff42621106ab0d66b6d7a147de81cb5b20e0f615e6a4fd1",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/SECONDARY_DEBUG_prvk.pem"
+    },
+    {
+      "path": "lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/SLA_prvk.pem",
+      "sha256": "36deb280cc6922671387fe87718069990d1803070dbbddc1aad2e6f1c7891981",
+      "verified_public_url": "https://raw.githubusercontent.com/13179415360/openwrt-mt6990-lg6851f/main/lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/sign_master/hsm_test_keys/RSA4096/SLA_prvk.pem"
+    }
+  ],
+  "files": 23934,
+  "bytes": 468576568,
+  "symlinks": [
+    {
+      "path": "target/linux/starfive/base-files/lib/firmware/brcm/brcmfmac43430a0-sdio.txt",
+      "original": "brcmfmac43430-sdio.txt",
+      "materialized": true
+    },
+    {
+      "path": "target/linux/sunxi/base-files/lib/firmware/brcm/brcmfmac43430a0-sdio.txt",
+      "original": "brcmfmac43430-sdio.txt",
+      "materialized": true
+    },
+    {
+      "path": "package/network/config/netifd/files/sbin/ifdown",
+      "original": "ifup",
+      "materialized": true
+    },
+    {
+      "path": "package/base-files/files/etc/os-release",
+      "original": "../usr/lib/os-release",
+      "materialized": true
+    },
+    {
+      "path": "feeds-snapshot/luci/doc_gen/include/favicon.png",
+      "original": "../../themes/luci-theme-bootstrap/htdocs/luci-static/bootstrap/logo_48.png",
+      "materialized": true
+    }
+  ],
+  "verified_public_test_fixtures": [
+    {
+      "path": "feeds-snapshot/packages/net/nginx/patches/nginx-mod-lua/001-feature_support_pcre2.patch",
+      "sha256": "be008e60df296b32890c0161026ac8eb650a401ddccd3b06652cbbc819284130",
+      "url": "https://raw.githubusercontent.com/openwrt/packages/0526d6d9cad0a9052fc9d49572e2f8968a1bf8dd/net/nginx/patches/nginx-mod-lua/001-feature_support_pcre2.patch"
+    }
+  ],
+  "false_positive_parser_markers_restored": []
+}

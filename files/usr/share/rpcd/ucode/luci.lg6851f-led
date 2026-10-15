@@ -1,0 +1,111 @@
+#!/usr/bin/env ucode
+'use strict';
+import { readfile,writefile,rename } from 'fs';
+import { cursor } from 'uci';
+const CONFIG='lg6851f_led';
+const OVERRIDES='/tmp/lg6851f-led-overrides';
+/* Stock hwcfg10007050, global GPIO base276. Five apertures, nine channels.
+ * 4G:G470/B471/R472; 5G:B473/R474/G475. Old class names are retained.
+ */
+const GROUPS=[
+ {key:'network',label:'网络',hint:'自动跟随有线接口连接',channels:[{name:'5g_evb_voice',color:'green'}]},
+ {key:'cell5g',label:'5G',hint:'自动跟随 5G 驻网与信号',channels:[{name:'lg6851f:5g-good',color:'green'},{name:'lg6851f:5g-bad',color:'blue'},{name:'lg6851f:5g-fair',color:'red'}]},
+ {key:'cell4g',label:'4G',hint:'自动跟随 4G 驻网与信号',channels:[{name:'lg6851f:4g-good',color:'green'},{name:'lg6851f:4g-fair',color:'blue'},{name:'lg6851f:4g-bad',color:'red'}]},
+ {key:'wifi',label:'Wi-Fi',hint:'自动跟随无线接口状态',channels:[{name:'lg6851f:wifi',color:'green'}]},
+ {key:'power',label:'电源',hint:'自动为常亮；熄灭仅关闭指示灯',channels:[{name:'lg6851f:power',color:'green'}]}
+];
+function supported(){return trim(readfile('/tmp/sysinfo/board_name')||'')=='fiberhome,lg6851f';}
+function settings(c,group){
+ let mode=c.get(CONFIG,group.key,'mode')||'auto',interval=+(c.get(CONFIG,group.key,'interval')||500),color=c.get(CONFIG,group.key,'color')||'green';
+ return {mode:index(['auto','on','off','blink'],mode)>=0?mode:'auto',interval:index([250,500,1000],interval)>=0?interval:500,color:index(map(group.channels,x=>x.color),color)>=0?color:'green'};
+}
+function capability(group,mode){
+ for(let ch in group.channels){let p='/sys/class/leds/'+ch.name;
+  if(readfile(p+'/max_brightness')==null)return '驱动接口未就绪';
+  if(mode=='blink' && index(readfile(p+'/trigger')||'','timer')<0)return '驱动未提供闪烁功能';
+ }
+ return null;
+}
+function apply_one(ch,mode,interval){
+ let p='/sys/class/leds/'+ch.name;
+ if(mode=='blink')return !!writefile(p+'/trigger','timer\n') && !!writefile(p+'/delay_on',interval+'\n') && !!writefile(p+'/delay_off',interval+'\n');
+ if(!writefile(p+'/trigger',mode=='power-auto'?'default-on\n':'none\n'))return false;
+ return mode=='auto'?true:!!writefile(p+'/brightness',(mode=='off'?'0':trim(readfile(p+'/max_brightness')||'1'))+'\n');
+}
+function apply_group(group,s){
+ let ok=true;
+ /* Clear other RGB emitters first, so a colour change never lights all three. */
+ if(s.mode=='on'||s.mode=='blink'){
+  for(let ch in group.channels)if(ch.color!=s.color && !apply_one(ch,'off',s.interval))ok=false;
+  for(let ch in group.channels)if(ch.color==s.color && !apply_one(ch,s.mode,s.interval))ok=false;
+ }else for(let ch in group.channels)if(!apply_one(ch,s.mode=='auto'&&group.key=='power'?'power-auto':s.mode,s.interval))ok=false;
+ return ok;
+}
+function overrides(c){
+ let rows=[];
+ for(let group in GROUPS){let s=settings(c,group);if(s.mode=='auto')continue;
+  for(let ch in group.channels)push(rows,ch.name+'='+((s.mode=='on'||s.mode=='blink')&&ch.color!=s.color?'off':s.mode)+':'+s.interval);
+ }
+ if(!writefile(OVERRIDES+'.new',join('\n',rows)+'\n'))return false;
+ return rename(OVERRIDES+'.new',OVERRIDES);
+}
+function status(){
+ if(!supported())return {supported:false,leds:[]};
+ let c=cursor(),rows=[];
+ for(let group in GROUPS){let active=[],blinking=false,problem=capability(group,'auto'),s=settings(c,group);
+  for(let ch in group.channels){let p='/sys/class/leds/'+ch.name,t=match(readfile(p+'/trigger')||'',/\[([^\]]+)\]/),is_blink=t?.[1]=='timer',lit=+(trim(readfile(p+'/brightness')||'0'))>0;
+   if(lit||is_blink)push(active,ch.color);if(is_blink)blinking=true;
+  }
+  push(rows,{key:group.key,label:group.label,hint:group.hint,...s,colors:map(group.channels,x=>x.color),available:!problem,error:problem,
+   lit:length(active)>0,active_colors:active,blinking:blinking});
+ }
+ return {supported:true,leds:rows};
+}
+function set_mode(key,mode,interval,color){
+ if(!supported() || index(['auto','on','off','blink'],mode)<0 || index([250,500,1000],interval)<0)return {success:false,error:'灯光参数无效'};
+ let selected=filter(GROUPS,x=>key=='all'||x.key==key);
+ if(!length(selected))return {success:false,error:'未知指示灯'};
+ let c=cursor(),old=[],changed=false;
+ for(let group in selected){let problem=capability(group,mode);if(problem)return {success:false,error:group.label+'：'+problem,status:status()};
+  let target_color=key=='all'?settings(c,group).color:color||settings(c,group).color;
+  if(index(map(group.channels,x=>x.color),target_color)<0)return {success:false,error:'该指示灯不支持此颜色'};
+  let previous=settings(c,group);push(old,{group:group,setting:previous});
+  if(previous.mode!=mode || previous.interval!=interval || previous.color!=target_color)changed=true;
+  c.set(CONFIG,group.key,'led');c.set(CONFIG,group.key,'mode',mode);c.set(CONFIG,group.key,'interval',''+interval);c.set(CONFIG,group.key,'color',target_color);
+ }
+ if(!changed){let ok=overrides(c);for(let group in selected)if(!apply_group(group,settings(c,group)))ok=false;return {success:ok,unchanged:true,error:ok?null:'灯光状态未能应用',status:status()};}
+ if(!overrides(c))return {success:false,error:'无法发布灯光设置'};
+ let ok=true;for(let group in selected)if(!apply_group(group,settings(c,group)))ok=false;
+ if(ok)ok=!!c.commit(CONFIG);
+ if(!ok){let previous=cursor();overrides(previous);for(let item in old)apply_group(item.group,item.setting);return {success:false,error:'灯光设置未能完整应用，请重新读取状态',status:status()};}
+ return {success:true,status:status()};
+}
+function arg0(){try{return ARGV[0];}catch(e){return null;}}
+function migrate(){
+ let c=cursor();if(c.get(CONFIG,'main','layout_version')=='2')return true;
+ let legacy=[{group:'cell4g',keys:['4g_green','4g_yellow','4g_red'],colors:['green','blue','red']},
+  {group:'cell5g',keys:['5g_green','5g_yellow','5g_red'],colors:['green','red','blue']}];
+ let all_off=c.get(CONFIG,'wifi','mode')=='off';
+ for(let entry in legacy){let values=map(entry.keys,k=>c.get(CONFIG,k,'mode')),candidate=null;
+  if(length(filter(values,v=>v=='off'))!=3)all_off=false;
+  for(let mode in ['blink','on'])for(let i=0;i<3;i++)if(!candidate && values[i]==mode)candidate={mode:mode,color:entry.colors[i],interval:c.get(CONFIG,entry.keys[i],'interval')||'500'};
+  if(!candidate)candidate={mode:length(filter(values,v=>v=='off'))==3?'off':'auto',color:'green',interval:'500'};
+  if(!c.get(CONFIG,entry.group,'mode')){c.set(CONFIG,entry.group,'led');for(let k in candidate)c.set(CONFIG,entry.group,k,candidate[k]);}
+ }
+ for(let key in ['network','power'])if(!c.get(CONFIG,key,'mode')){c.set(CONFIG,key,'led');c.set(CONFIG,key,'mode',all_off?'off':'auto');c.set(CONFIG,key,'color','green');c.set(CONFIG,key,'interval','500');}
+ for(let entry in legacy)for(let key in entry.keys)c.delete(CONFIG,key);
+ c.set(CONFIG,'main','preferences');c.set(CONFIG,'main','layout_version','2');c.set(CONFIG,'main','description','Five physical front panel indicators');
+ return c.commit(CONFIG);
+}
+if(arg0()=='migrate'){if(!supported() || !migrate())die('灯光设置迁移失败');return null;}
+if(index(['off','auto','status'],arg0())>=0){let r=arg0()=='status'?status():set_mode('all',arg0(),500,'');if(r.success===false)die(r.error);print(sprintf('%J\n',r));return null;}
+if(arg0()=='apply'){
+ if(!supported())return null;
+ let c=cursor();overrides(c);
+ for(let group in GROUPS){let s=settings(c,group);if(capability(group,s.mode))continue;if(s.mode!='auto'||group.key=='power')apply_group(group,s);}
+ return null;
+}
+return {'luci.lg6851f-led':{
+ get_status:{call:function(){return status();}},
+ set_mode:{args:{key:'',mode:'auto',interval:500,color:''},call:function(req){return set_mode(req.args.key,req.args.mode,+req.args.interval,req.args.color);}}
+}};

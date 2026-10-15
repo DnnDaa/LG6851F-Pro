@@ -1,0 +1,210 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+TAG=lg6851f-network-led
+STATE=/tmp/lg6851f-network-led.state
+LEDROOT=/sys/class/leds
+PANEL_LEDS='lg6851f:4g-good lg6851f:4g-fair lg6851f:4g-bad lg6851f:5g-bad lg6851f:5g-fair lg6851f:5g-good'
+MODEM_STATE=/tmp/lg6851f-modem-status.state
+
+config_load lg6851f_network_led
+config_get start_delay main start_delay 30
+config_get poll_seconds main poll_seconds 5
+config_get ping_interval main ping_interval 15
+config_get normal_max_ms main normal_max_ms 150
+config_get orange_max_ms main orange_max_ms 500
+config_get good_rsrp main good_rsrp -95
+config_get fair_rsrp main fair_rsrp -110
+
+
+OVERRIDE_FILE=/tmp/lg6851f-led-overrides
+OVERRIDE_TEXT='|'
+read_manual_leds() {
+ local led setting mode interval trigger actual
+ OVERRIDE_TEXT='|'
+ [ -r "$OVERRIDE_FILE" ] || return 0
+ while IFS='=' read -r led setting;do
+  case "$led" in lg6851f:wifi|lg6851f:4g-good|lg6851f:4g-fair|lg6851f:4g-bad|lg6851f:5g-good|lg6851f:5g-fair|lg6851f:5g-bad|5g_evb_voice|lg6851f:power) ;;*)continue;;esac
+  mode=${setting%%:*};interval=${setting#*:}
+  case "$mode" in on|off|blink) ;;*)continue;;esac
+  OVERRIDE_TEXT="$OVERRIDE_TEXT$led=1|"
+  trigger=;IFS= read -r trigger < "$LEDROOT/$led/trigger"
+  case "$mode" in
+   blink)
+    case "$interval" in 250|500|1000) ;;*)interval=500;;esac
+    case "$trigger" in *'[timer]'*) ;;*)
+     echo timer > "$LEDROOT/$led/trigger"
+     echo "$interval" > "$LEDROOT/$led/delay_on"
+     echo "$interval" > "$LEDROOT/$led/delay_off";;esac;;
+   on|off)
+    case "$trigger" in *'[none]'*) ;;*)echo none > "$LEDROOT/$led/trigger";;esac
+    actual=;IFS= read -r actual < "$LEDROOT/$led/brightness"
+    [ "$mode" = on ] && interval=1 || interval=0
+    [ "$actual" = "$interval" ] || echo "$interval" > "$LEDROOT/$led/brightness";;
+  esac
+ done < "$OVERRIDE_FILE"
+}
+set_led() {
+	case "$OVERRIDE_TEXT" in *"|$1=1|"*)return 0;;esac
+	local actual=
+	[ -w "$LEDROOT/$1/brightness" ] || return 0
+	IFS= read -r actual < "$LEDROOT/$1/brightness"
+	[ "$actual" = "$2" ] || echo "$2" > "$LEDROOT/$1/brightness"
+}
+
+panel_off() {
+	local led
+	for led in $PANEL_LEDS; do set_led "$led" 0; done
+}
+
+wired_state() {
+ local p value
+ for p in /sys/class/net/eth*/carrier;do
+  [ -r "$p" ] || continue
+  value=;IFS= read -r value < "$p"
+  [ "$value" = 1 ] && return 0
+ done
+ return 1
+}
+
+wifi_state() {
+	local netdev master state
+	for netdev in /sys/class/net/phy*-ap* /sys/class/net/ra0 /sys/class/net/rai0; do
+		[ -e "$netdev" ] || continue
+		state=;IFS= read -r state < "$netdev/operstate"
+		master="$(readlink -f "$netdev/master" 2>/dev/null)"
+		case "$state:$master" in
+			up:*/br-lan|unknown:*/br-lan) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+update_quality() {
+	local now result loss avg
+	now="$(date +%s)"
+	[ $((now - last_ping)) -lt "$ping_interval" ] && return
+	last_ping="$now"
+	result="$(ping -c 3 -W 2 1.1.1.1 2>/dev/null)"
+	loss="$(echo "$result" | sed -n 's/.* \([0-9][0-9]*\)% packet loss.*/\1/p' | tail -n 1)"
+	avg="$(echo "$result" | sed -n 's|.*= [0-9.]*\/\([0-9][0-9]*\)\.[0-9]*/.*|\1|p' | tail -n 1)"
+	PING_LOSS="${loss:-100}"
+	PING_AVG_MS="${avg:-9999}"
+	if [ "$PING_LOSS" -eq 0 ] && [ "$PING_AVG_MS" -lt "$normal_max_ms" ]; then
+		QUALITY=NORMAL
+	elif [ "$PING_LOSS" -lt 100 ] && [ "$PING_AVG_MS" -lt "$orange_max_ms" ]; then
+		QUALITY=ORANGE
+	else
+		QUALITY=RED
+	fi
+}
+
+update_signal_quality() {
+	case "$RSRP" in
+		-*[!0-9]*|*[!0-9-]*|'') update_quality; return ;;
+	esac
+	if [ "$RSRP" -ge "$good_rsrp" ]; then
+		QUALITY=NORMAL
+	elif [ "$RSRP" -ge "$fair_rsrp" ]; then
+		QUALITY=ORANGE
+	else
+		QUALITY=RED
+	fi
+}
+
+trap 'panel_off; set_led "lg6851f:wifi" 0; exit 0' TERM INT EXIT
+sleep "$start_delay"
+
+for led in lg6851f:wifi $PANEL_LEDS; do
+	if [ ! -w "$LEDROOT/$led/brightness" ]; then
+		logger -t "$TAG" "missing DTS LED class: $led"
+		exit 1
+	fi
+done
+
+last_ping=0
+QUALITY=RED
+PING_LOSS=100
+PING_AVG_MS=9999
+RAT=UNKNOWN
+RAT_RAW=
+
+while :; do
+ read_manual_leds
+ all_manual=1
+ for led in lg6851f:wifi 5g_evb_voice $PANEL_LEDS;do case "$OVERRIDE_TEXT" in *"|$led=1|"*) ;;*)all_manual=0;;esac;done
+ if [ "$all_manual" = 1 ];then sleep "$poll_seconds";continue;fi
+	if wifi_state; then WIFI=ON; set_led lg6851f:wifi 1; else WIFI=OFF; set_led lg6851f:wifi 0; fi
+	if wired_state;then WIRED=ON;set_led 5g_evb_voice 1;else WIRED=OFF;set_led 5g_evb_voice 0;fi
+	# With cellular emitters manual, neither network nor Wi-Fi needs modem RPC.
+	cell_auto=0
+	for led in $PANEL_LEDS;do case "$OVERRIDE_TEXT" in *"|$led=1|"*) ;;*)cell_auto=1;;esac;done
+	[ "$cell_auto" = 1 ] || { sleep "$poll_seconds";continue; }
+
+	NET_JSON="$(ubus call network.interface.modem5g status 2>/dev/null)"
+	UP="$(echo "$NET_JSON" | jsonfilter -e '@.up')"
+	WAN="$(echo "$NET_JSON" | jsonfilter -e '@.l3_device')"
+
+	# A single collector owns all periodic MIPC queries. LED and LuCI consume
+	# the same atomic cache, preventing independent control-channel polling.
+	cached_sim= cached_rat= cached_raw= cached_registered= cached_updated= RSRP=
+	if [ -r "$MODEM_STATE" ]; then
+		while IFS='=' read -r key value; do
+			case "$key" in
+				SIM) cached_sim=$value;; RAT) cached_rat=$value;; RAT_RAW) cached_raw=$value;;
+				REGISTERED) cached_registered=$value;; UPDATED) cached_updated=$value;; RSRP) RSRP=$value;;
+			esac
+		done < "$MODEM_STATE"
+		case "$cached_updated" in ''|*[!0-9]*) cached_registered=; RSRP=;; *)
+			now=$(date +%s)
+			[ $((now-cached_updated)) -le 90 ] || { cached_registered=; RSRP=; }
+		;; esac
+		case "$cached_rat" in 4G|5G) RAT="$cached_rat"; RAT_RAW="$cached_raw";; esac
+	fi
+
+	SIM="${cached_sim:-unknown}"
+
+	REGISTERED=NO
+	[ "$UP" = true ] && [ -n "$WAN" ] && ip -4 addr show dev "$WAN" 2>/dev/null | grep -q 'inet ' && REGISTERED=YES
+	[ "$cached_registered" = YES ] && REGISTERED=YES
+	if [ "$REGISTERED" = YES ]; then update_signal_quality; else QUALITY=RED; PING_LOSS=100; PING_AVG_MS=9999; fi
+
+	# Compute the desired emitter before writing: no periodic off/on flicker.
+	selected_led=
+	case "$SIM" in
+		*MIPC_SIM_STATUS_NOT_INSERT*)SIM_READY=NO;;
+		*MIPC_SIM_STATUS_COMPLETE_READY*)SIM_READY=YES;;
+		*)[ "$REGISTERED" = YES ] && SIM_READY=YES || SIM_READY=NO;;
+	esac
+	if [ "$SIM_READY" = YES ] && [ "$REGISTERED" = YES ];then
+		case "$RAT:$QUALITY" in
+			4G:NORMAL)selected_led=lg6851f:4g-good;;
+			4G:ORANGE)selected_led=lg6851f:4g-fair;;
+			4G:*)selected_led=lg6851f:4g-bad;;
+			5G:NORMAL)selected_led=lg6851f:5g-good;;
+			5G:ORANGE)selected_led=lg6851f:5g-bad;;
+			5G:*)selected_led=lg6851f:5g-fair;;
+		esac
+	fi
+	for led in $PANEL_LEDS;do
+		[ "$led" = "$selected_led" ] && desired=1 || desired=0
+		set_led "$led" "$desired"
+	done
+
+	{
+		echo "REGISTERED=$REGISTERED"
+		echo "SIM=$SIM"
+		echo "SIM_READY=$SIM_READY"
+		echo "RAT=$RAT"
+		echo "MODEM_STATE=$MODEM_STATE"
+		echo "WAN=$WAN"
+		echo "QUALITY=$QUALITY"
+		echo "PING_LOSS=$PING_LOSS"
+		echo "PING_AVG_MS=$PING_AVG_MS"
+		echo "RSRP=$RSRP"
+		echo "WIFI=$WIFI"
+		echo "WIRED=$WIRED"
+	} >"$STATE"
+	sleep "$poll_seconds"
+done

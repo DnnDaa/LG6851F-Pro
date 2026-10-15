@@ -1,0 +1,7 @@
+#!/bin/sh
+case "${1:-status}" in
+ off|auto|status)exec /usr/bin/ucode /usr/share/rpcd/ucode/luci.lg6851f-led "${1:-status}";;
+ start|stop|restart)exec /etc/init.d/lg6851f-network-led "$1";;
+ log)logread | grep 'lg6851f-network-led' | tail -n "${2:-50}";;
+ *)echo "Usage: $0 {off|auto|status|start|stop|restart|log}" >&2;exit 2;;
+esac

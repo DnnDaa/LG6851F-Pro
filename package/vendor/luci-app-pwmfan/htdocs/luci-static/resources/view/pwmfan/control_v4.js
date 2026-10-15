@@ -1,0 +1,251 @@
+'use strict';
+'require baseclass';
+'require poll';
+'require rpc';
+'require ui';
+
+const callStatus = rpc.declare({
+	object: 'luci.pwmfan',
+	method: 'get_status',
+	expect: { }
+});
+
+const callSetPwm = rpc.declare({
+	object: 'luci.pwmfan',
+	method: 'set_pwm',
+	params: [ 'value' ]
+});
+
+const callRestoreAuto = rpc.declare({
+	object: 'luci.pwmfan',
+	method: 'restore_auto'
+});
+
+function speedLabel(value) {
+	return ({ 110: _('Automatic'), 115: _('Quiet'), 170: _('Automatic'), 180: _('Normal'),
+		200: _('Automatic'), 220: _('Strong wind'), 240: _('Automatic'),
+		255: _('Emergency maximum') })[value] || _('PWM');
+}
+
+return baseclass.extend({
+	title: _('MT6990 PWM Fan'),
+
+	syncTheme(page) {
+		if (!page)
+			return;
+
+		const host = document.body;
+		const style = getComputedStyle(host);
+		let background = style.backgroundColor;
+		let color = style.color;
+		if (!background || background == 'transparent' || background == 'rgba(0, 0, 0, 0)')
+			background = getComputedStyle(document.querySelector('.main-right') || document.documentElement).backgroundColor;
+		if (!color)
+			color = '#222';
+
+		const rgb = function(value) {
+			const match = String(value).match(/[\d.]+/g);
+			return match && match.length >= 3 ? match.slice(0, 3).map(Number) : null;
+		};
+		const luminance = function(value) {
+			const channels = rgb(value);
+			return channels ? channels.reduce(function(sum, channel, index) {
+				channel /= 255;
+				channel = channel <= .03928 ? channel / 12.92 : Math.pow((channel + .055) / 1.055, 2.4);
+				return sum + channel * [ .2126, .7152, .0722 ][index];
+			}, 0) : null;
+		};
+		const bgLum = luminance(background);
+		const textLum = luminance(color);
+		if (bgLum != null && textLum != null) {
+			const contrast = (Math.max(bgLum, textLum) + .05) / (Math.min(bgLum, textLum) + .05);
+			if (contrast < 4.5)
+				color = bgLum < .45 ? '#f0f0f0' : '#202020';
+		}
+
+		page.style.setProperty('color', color, 'important');
+		page.querySelectorAll('.pwmfan-panel').forEach(function(panel) {
+			panel.style.setProperty('background-color', background, 'important');
+			panel.style.setProperty('color', color, 'important');
+		});
+	},
+
+	load() {
+		return L.resolveDefault(callStatus(), { available: false });
+	},
+
+	update(data) {
+		if (!data || !data.available)
+			return;
+
+		const pwm = document.getElementById('pwmfan-value');
+		const state = document.getElementById('pwmfan-state');
+		const temp = document.getElementById('pwmfan-temp');
+		const bar = document.getElementById('pwmfan-bar');
+		const target = document.getElementById('pwmfan-target');
+		const status = document.getElementById('pwmfan-status');
+		const rpm = document.getElementById('pwmfan-rpm');
+		const channels = document.getElementById('pwmfan-channels');
+		const controller = document.getElementById('pwmfan-controller');
+		const fanType = document.getElementById('pwmfan-type');
+		const curve = document.getElementById('pwmfan-curve');
+		const values = {};
+		String(data.controller || '').trim().split(/\n/).forEach(function(line) {
+			const pos = line.indexOf('=');
+			if (pos > 0) values[line.substring(0, pos)] = line.substring(pos + 1);
+		});
+		const threeWire = values.fan_type == '3wire';
+		const controllerTemperature = Number(values.temperature);
+		const pointLabel = ({ low: _('Quiet'), medium: _('Standard'), high: _('Strong wind') })[
+			String(values.speed_point || '').replace('-10khz', '')
+		] || _('Detecting');
+		const cpuTemperatures = (data.temperatures || []).filter(function(sensor) {
+			return /^cpu_little[0-9]+$/.test(sensor.name) && Number.isFinite(sensor.temp);
+		});
+		const cpuTemperature = cpuTemperatures.length ? Math.max.apply(null, cpuTemperatures.map(function(sensor) {
+			return sensor.temp;
+		})) : null;
+
+		if (pwm) pwm.textContent = threeWire
+			? '10 kHz / %s · %s'.format(values.threshold || '-', pointLabel)
+			: '%s (%s)'.format(data.pwm, speedLabel(data.pwm));
+		if (state) state.textContent = '%s / %s'.format(data.cooling_state ?? '-', data.max_state ?? '-');
+		const controlTemperature = threeWire && Number.isFinite(controllerTemperature) && controllerTemperature > 0
+			? controllerTemperature : cpuTemperature;
+		if (temp) temp.textContent = controlTemperature != null ? '%.1f °C'.format(controlTemperature / 1000) : _('Unavailable');
+		if (bar) bar.style.width = '%d%%'.format(controlTemperature != null ? Math.max(0, Math.min(100, ((controlTemperature / 1000) - 35) * 100 / 55)) : 0);
+		if (target) target.textContent = threeWire
+			? '%s · 10 kHz / %s'.format(pointLabel, values.threshold || '-')
+			: '%s (%s)'.format(data.pwm, data.reverse ? _('Reverse PWM') : _('PWM'));
+		if (status) status.textContent = data.pwm > 0 ? _('Running') : _('Stopped');
+		if (fanType) fanType.textContent = threeWire ? _('3Pin fan') :
+			(values.fan_type == '4wire' ? _('4Pin fan') : _('Detecting'));
+		if (rpm) rpm.textContent = threeWire ? _('3Pin fan · no RPM feedback') :
+			(data.tach_available ? _('4Pin fan · %d RPM').format(data.rpm) : _('No speed feedback (PWM control operating normally)'));
+		if (channels) channels.textContent = (data.pwm_values || []).map(function(fan, index) {
+			return '%s%d=%s'.format(_('Fan channel '), index + 1, fan.pwm ?? '-');
+		}).join(' · ');
+		if (controller) {
+			controller.textContent = values.status ? '%s · %s · %s'.format(values.status, values.active, values.direction) : _('Detecting');
+		}
+		if (curve) {
+			const steps = threeWire ? [
+				[ _('Quiet'), '10 kHz / 8 · ≤50°C' ],
+				[ _('Standard'), '10 kHz / 10 · ↑55°C / ↓65°C' ],
+				[ _('Strong wind'), '10 kHz / 12 · ≥70°C' ]
+			] : [
+				[ '<60°C', 'PWM 110' ], [ '60–65°C', 'PWM 110' ], [ '65–70°C', 'PWM 170' ],
+				[ '70–75°C', 'PWM 200' ], [ '75–80°C', 'PWM 220' ], [ '80–85°C', 'PWM 240' ], [ '≥85°C', 'PWM 255' ]
+			];
+			curve.replaceChildren(...steps.map(function(step) {
+				return E('div', { 'class': 'pwmfan-step' }, [ E('strong', {}, step[0]), E('small', {}, step[1]) ]);
+			}));
+		}
+	},
+
+	handleSet(value, ev) {
+		ev.currentTarget.blur();
+		return callSetPwm(value).then(L.bind(function(result) {
+			if (!result || !result.success)
+				throw new Error(result?.error || _('PWM control failed'));
+			this.update(result.status);
+			ui.addNotification(null, E('p', {}, _('Manual fan speed applied; it remains active until the temperature profile is restored.')));
+		}, this)).catch(function(err) {
+				ui.addNotification(_('MT6990 PWM Fan'), E('p', {}, err.message), 'error');
+		});
+	},
+
+	handleAuto(ev) {
+		ev.currentTarget.blur();
+		return callRestoreAuto().then(L.bind(function(result) {
+			if (!result || !result.success)
+				throw new Error(result?.error || _('Unable to restore automatic control'));
+			this.update(result.status);
+			ui.addNotification(null, E('p', {}, _('Fan output matched to the current temperature profile.')));
+		}, this)).catch(function(err) {
+				ui.addNotification(_('MT6990 PWM Fan'), E('p', {}, err.message), 'error');
+		});
+	},
+
+	render(data) {
+		if (!data || !data.available)
+			return E('em', {}, _('No standard pwm-fan hwmon device was found.'));
+
+		const buttonLabels = { 115: _('Quiet'), 180: _('Standard'), 220: _('Strong wind') };
+		const buttons = [ 115, 180, 220 ].map(L.bind(function(value) {
+			return E('button', {
+				'class': 'btn cbi-button pwmfan-speed',
+				'click': ui.createHandlerFn(this, 'handleSet', value),
+				'title': _('Verified reliable fan speed')
+			}, [ buttonLabels[value] ]);
+		}, this));
+
+		buttons.push(E('button', {
+			'class': 'btn cbi-button cbi-button-positive',
+			'click': ui.createHandlerFn(this, 'handleAuto')
+		}, [ _('Apply temperature profile') ]));
+
+		const view = E('div', { 'class': 'pwmfan-page' }, [
+			E('style', {}, [
+				'.pwmfan-page{max-width:1050px;margin:0 auto}.pwmfan-head{display:flex;justify-content:space-between;align-items:center;margin:.2rem 0 1rem}',
+				'.pwmfan-live{color:#278b45;font-weight:600}.pwmfan-live:before{content:"";display:inline-block;width:.65rem;height:.65rem;background:#2ecc71;border-radius:50%;margin-right:.45rem;box-shadow:0 0 0 .2rem rgba(46,204,113,.14)}',
+				'.pwmfan-panel{padding:1.2rem 1.3rem;margin-bottom:1rem;background-color:transparent!important;color:inherit!important;border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:.55rem}',
+				'.pwmfan-panel h3{margin:0 0 1rem;padding:.75rem 1rem;font-size:1.15rem;border-radius:.25rem;background:color-mix(in srgb,currentColor 12%,transparent);color:inherit}.pwmfan-grid{display:grid;grid-template-columns:repeat(3,minmax(8em,1fr));gap:.75rem;margin-top:1rem}',
+				'.pwmfan-metric{padding:.85rem;border-radius:.5rem;background:transparent;background:color-mix(in srgb,currentColor 6%,transparent);border:1px solid color-mix(in srgb,currentColor 16%,transparent);color:inherit!important}.pwmfan-metric small{display:block;color:inherit!important;opacity:.72;margin-bottom:.3rem}.pwmfan-metric strong{font-size:1.12rem;color:inherit!important;opacity:1!important}',
+				'.pwmfan-temp-line{display:flex;justify-content:space-between;font-weight:600}.pwmfan-gauge{height:2rem;background:linear-gradient(90deg,#84cc16 0%,#facc15 48%,#fb923c 72%,#ef4444 100%);border-radius:.55rem;overflow:hidden;margin:.55rem 0 .25rem;position:relative}',
+				'.pwmfan-gauge span{display:block;height:100%;border-right:3px solid #fff;background:rgba(255,255,255,.15);transition:width .3s}.pwmfan-scale{display:flex;justify-content:space-between;font-size:.78rem;opacity:.7}',
+				'.pwmfan-curve{display:grid;grid-template-columns:repeat(5,1fr);gap:.45rem}.pwmfan-step{text-align:center;padding:.8rem .3rem;border-radius:.45rem;background:transparent;background:color-mix(in srgb,currentColor 6%,transparent);border:1px solid color-mix(in srgb,currentColor 16%,transparent);color:inherit!important}.pwmfan-step strong,.pwmfan-step small{display:block;color:inherit!important}.pwmfan-step strong{opacity:1!important}.pwmfan-step small{opacity:.72;margin-top:.2rem}',
+				'.pwmfan-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:.65rem}.pwmfan-actions .btn{min-height:3.4rem;white-space:normal}.pwmfan-speed{border-color:#4c9ed9}.pwmfan-note{display:block;margin-top:.9rem;opacity:.72}',
+				'@media(max-width:700px){.pwmfan-grid{grid-template-columns:repeat(2,1fr)}.pwmfan-actions{grid-template-columns:1fr}.pwmfan-curve{grid-template-columns:1fr}.pwmfan-head{align-items:flex-start;gap:1rem}}'
+			].join('')),
+			E('div', { 'class': 'pwmfan-head' }, [
+				E('h2', {}, _('PWM Fan Control')),
+				E('span', { 'class': 'pwmfan-live' }, _('Live status'))
+			]),
+			E('section', { 'class': 'pwmfan-panel' }, [
+				E('h3', {}, _('Temperature / Fan Overview')),
+				E('div', { 'class': 'pwmfan-temp-line' }, [ E('span', {}, _('CPU temperature')), E('strong', { 'id': 'pwmfan-temp' }) ]),
+				E('div', { 'class': 'pwmfan-gauge' }, E('span', { 'id': 'pwmfan-bar' })),
+				E('div', { 'class': 'pwmfan-scale' }, [ E('span', {}, '35°C ' + _('Low')), E('span', {}, '60°C'), E('span', {}, '75°C'), E('span', {}, '90°C ' + _('High')) ]),
+				E('div', { 'class': 'pwmfan-grid' }, [
+					E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('PWM / speed')), E('strong', { 'id': 'pwmfan-value' }) ]),
+					E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Target PWM level')), E('strong', { 'id': 'pwmfan-target' }) ]),
+					E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Thermal state')), E('strong', { 'id': 'pwmfan-state' }) ]),
+					E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Fan status')), E('strong', { 'id': 'pwmfan-status' }) ]),
+					E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Fan type')), E('strong', { 'id': 'pwmfan-type' }) ])
+					,E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Fan speed')), E('strong', { 'id': 'pwmfan-rpm' }) ])
+					,E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('PWM channels')), E('strong', { 'id': 'pwmfan-channels' }) ])
+				])
+			]),
+			E('section', { 'class': 'pwmfan-panel' }, [
+				E('h3', {}, _('Automatic Temperature Curve')),
+				E('div', { 'class': 'pwmfan-curve', 'id': 'pwmfan-curve' }, [
+					[ '<60°C', 'PWM 110' ], [ '60–65°C', 'PWM 110' ], [ '65–70°C', 'PWM 170' ], [ '70–75°C', 'PWM 200' ], [ '75–80°C', 'PWM 220' ], [ '80–85°C', 'PWM 240' ], [ '≥85°C', 'PWM 255' ]
+				].map(function(step) { return E('div', { 'class': 'pwmfan-step' }, [ E('strong', {}, step[0]), E('small', {}, step[1]) ]); }))
+			]),
+			E('section', { 'class': 'pwmfan-panel' }, [
+				E('h3', {}, _('Controls')),
+				E('div', { 'class': 'pwmfan-actions' }, buttons),
+				E('small', { 'class': 'pwmfan-note' }, _('Manual speed remains active until Apply temperature profile restores automatic control.'))
+			]),
+			E('section', { 'class': 'pwmfan-panel' }, [
+				E('h3', {}, _('Automatic detection')),
+				E('div', { 'class': 'pwmfan-metric' }, [ E('small', {}, _('Controller state / active route / polarity')), E('strong', { 'id': 'pwmfan-controller' }, _('Detecting')) ])
+			])
+		]);
+
+		this.syncTheme(view);
+		requestAnimationFrame(L.bind(function() {
+			this.syncTheme(view);
+			this.update(data);
+		}, this));
+		window.setTimeout(L.bind(this.syncTheme, this, view), 300);
+		poll.add(L.bind(function() {
+			return L.resolveDefault(callStatus(), null).then(L.bind(function(status) {
+				if (status) this.update(status);
+			}, this));
+		}, this), 2);
+		return view;
+	},
+
+});

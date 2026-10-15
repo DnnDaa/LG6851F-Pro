@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# The original Wi-Fi stack owns its AP processes directly.
+/etc/init.d/wpad disable
+/etc/init.d/ql_speed_monitor_mgr disable
+
+# Diagnostic-only or empty services are available for manual use, but do not
+# spend memory and startup time on a production CPE.
+/etc/init.d/mdlogger disable
+/etc/init.d/mt6990-adb-usb disable
+/etc/init.d/ubihealthd disable
+/etc/init.d/radius disable
+
+# Keep the user-requested persistent swap policy.
+/etc/init.d/swap enable
+/etc/init.d/lg6851f-performance enable
+exit 0

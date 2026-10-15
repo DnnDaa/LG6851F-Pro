@@ -1,0 +1,7 @@
+{
+ "luci-app-lg6851f-led": {
+  "description":"Read and control LG6851F physical indicator LEDs",
+  "read":{"ubus":{"luci.lg6851f-led":["get_status"]}},
+  "write":{"ubus":{"luci.lg6851f-led":["set_mode"]}}
+ }
+}

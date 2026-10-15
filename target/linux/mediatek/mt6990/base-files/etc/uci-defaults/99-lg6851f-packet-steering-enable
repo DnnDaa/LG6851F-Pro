@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# A preserved overlay may contain the rc.d whiteout created by an earlier
+# `packet_steering disable`.  Restore netifd's single S25 owner on every newly
+# installed rootfs; uci-defaults removes this one-shot guard after success.
+[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "fiberhome,lg6851f" ] || exit 0
+
+/etc/init.d/packet_steering enable
+
+# Cellular and wired traffic is accelerated by the MT6990 PPE engines
+# (wired -> PPE0, modem/MDMA -> PPE1).  Keep both options forced on so a
+# preserved overlay cannot silently disable hardware offload.
+uci -q set firewall.@defaults[0].flow_offloading='1'
+uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+uci -q commit firewall

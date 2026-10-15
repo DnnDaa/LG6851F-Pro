@@ -1,0 +1,656 @@
+'use strict';
+'require view';
+'require form';
+'require rpc';
+'require uci';
+'require ui';
+'require fs';
+
+const callListAlgorithms = rpc.declare({
+	object: 'luci.swanctl',
+	method: 'list-algs',
+	expect: { }
+});
+
+function validateTimeFormat(section_id, value) {
+	if (value && !value.match(/^\d+[smhd]$/)) {
+		return _('Number must have suffix s, m, h or d');
+	}
+
+	return true;
+}
+
+function addAlgorithms(o, algorithms) {
+	algorithms?.forEach(function (algorithm) {
+		const { name: name, insecure: insecure } = algorithm;
+
+		if (insecure) {
+			o.value(name, '%s*'.format(name));
+		} else {
+			o.value(name);
+		}
+	});
+}
+
+function sectionNameCheck(extra_class) {
+	var el = form.GridSection.prototype.renderSectionAdd.apply(this, arguments),
+		nameEl = el.querySelector('.cbi-section-create-name');
+	ui.addValidator(nameEl, 'uciname', true, function(v) {
+		let sections = [
+			...uci.sections('ipsec', 'connection'),
+			...uci.sections('ipsec', 'child'),
+			...uci.sections('ipsec', 'crypto_proposal'),
+			...uci.sections('ipsec', 'local'),
+			...uci.sections('ipsec', 'remote'),
+		];
+		if (sections.find(function(s) {
+			return s['.name'] == v;
+		})) {
+			return _('Connections, Encryption Proposals, Children, Locals and Remotes may not share the same names.') + ' ' +
+				_('Use combinations like child1_phase1.');
+		}
+		return true;
+	}, 'blur', 'keyup');
+	return el;
+};
+
+let migrationOverlay = null;
+
+function renderMigrationContent(errorMessage) {
+	const dialog = migrationOverlay.firstElementChild;
+	const migrateButton = E('button', {
+		'class': 'btn cbi-button cbi-button-apply',
+		'click': handleMigrate
+	}, [_('Migrate')]);
+
+	const content = E([], [
+		E('h4', _('Migrate IPsec configuration')),
+		E('p', _('A legacy IPsec configuration was found.') + ' ' +
+			_('It must be migrated to the new swanctl uci schema in ' +
+				'\'/etc/config/ipsec\' before it can be managed here.')),
+		E('p', _('Before migration, the file \'/etc/config/ipsec\' is moved to \'/etc/config/ipsec_bak\'.') + ' ' +
+			_('The migration may require manual intervention.') + ' ' +
+			_('Therefore, the VPN is not restarted.')),
+		E('p', _('Warning: The migration will drop all IPsec VPN connections.'))
+	]);
+
+	if (errorMessage)
+		content.appendChild(E('p', errorMessage));
+
+	content.appendChild(E('div', { 'class': 'right' }, [migrateButton]));
+
+	dialog.replaceChildren(content);
+}
+
+function showMigrationOverlay(viewNode) {
+	if (migrationOverlay)
+		return;
+
+	const dialog = E('div', { 'class': 'modal', 'style': 'margin:0;' });
+	migrationOverlay = E('div', {
+		'class': 'migration-overlay',
+		'style': 'position:absolute;top:0;right:0;bottom:0;left:0;z-index:900;display:flex;align-items:center;justify-content:center;padding:1em;pointer-events:all;'
+	}, [dialog]);
+
+	viewNode.style.position = 'relative';
+	viewNode.appendChild(migrationOverlay);
+
+	const maincontent = document.getElementById('maincontent');
+	if (maincontent)
+		maincontent.style.pointerEvents = 'none';
+
+	renderMigrationContent(null);
+}
+
+function handleMigrate() {
+	const dialog = migrationOverlay.firstElementChild;
+
+	dialog.replaceChildren(E([], [
+		E('h4', _('Migrate IPsec configuration')),
+		E('p', _('Migrating IPsec configuration…'))
+	]));
+
+	fs.exec('/etc/init.d/swanctl', ['migrate', L.env.sessionid]).then(function (result) {
+		if (result.code != 0)
+			renderMigrationContent(_('Migration failed: %s').format(result.stderr || result.stdout || _('unknown error')));
+		else
+			window.location.reload();
+	}).catch(function (e) {
+		renderMigrationContent(_('Migration failed: %s').format(e.message));
+	});
+}
+
+return view.extend({
+	load: function () {
+		return Promise.all([
+			callListAlgorithms(),
+			L.resolveDefault(uci.load('network'), null),
+			L.resolveDefault(uci.load('ipsec'), null),
+		]).then(function (data) {
+			let hasNoGlobals = uci.sections('ipsec', 'globals').length === 0;
+			return {
+				algorithms: data[0],
+				legacyConfig: hasNoGlobals,
+			};
+		});
+	},
+
+	render: function (result) {
+		let m, s, o;
+		const legacyConfig = result.legacyConfig;
+		const algorithms = result.algorithms.data ?? {};
+		const error = result.algorithms.error;
+
+		if (error)
+			ui.addNotification(null, E('p', _('Some options are unavailable because swanctl failed to load: %s').format(error)), 'warning');
+
+		m = new form.Map('ipsec', _('Connection configurations'),
+			_('On this page, you can configure the IPsec connections.'));
+		m.tabbed = true;
+
+		// Connection Configuration
+		s = m.section(form.GridSection, 'connection', _('Connection'),
+			_('Define Connection IKE Configurations.'));
+		s.addremove = true;
+		s.nodescriptions = true;
+		s.renderSectionAdd = sectionNameCheck
+
+		o = s.tab('general', _('General'));
+		o = s.tab('authentication', _('Authentication'));
+		o = s.tab('advanced', _('Advanced'));
+
+		o = s.taboption('general', form.Flag, 'enabled', _('Enabled'),
+			_('Configuration is enabled or not'));
+		o.rmempty = false;
+
+		o = s.taboption('general', form.DynamicList, 'remote_addrs', _('Remote Endpoints'),
+			_('IP address or FQDN name of the tunnel remote endpoints.') + ' ' +
+			_('If no value is specified, "%any" is assumed.'));
+		o.datatype = 'or(hostname,ipaddr)';
+		o.placeholder = '%any';
+
+		o = s.taboption('general', form.DynamicList, 'local_addrs', _('Local Endpoints'),
+			_('IP address or FQDN name of the tunnel local endpoints.') + ' ' +
+			_('If no value is specified, "%any" is assumed.'));
+		o.datatype = 'or(hostname,ipaddr)';
+		o.placeholder = '%any';
+		o.modalonly = true;
+
+		o = s.taboption('general', form.DynamicList, 'vips', _('Virtual IP addresses'),
+			_('Virtual IP addresses used as the source IP for outgoing traffic.'));
+		o.datatype = 'ipaddr';
+		o.modalonly = true;
+
+		o = s.taboption('general', form.MultiValue, 'crypto_proposal', _('Crypto Proposal'),
+			_('List of IKE (phase 1) proposals to use for authentication'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var sections = uci.sections('ipsec', 'crypto_proposal').filter(function (section) {
+				return section.is_esp != '1';
+			});
+			if (sections.length == 0) {
+				this.value('', _('Please create a Proposal first'));
+			} else {
+				sections.forEach(L.bind(function (section) {
+					this.value(section['.name']);
+				}, this));
+			}
+
+			return this.super('load', [section_id]);
+		};
+		o.rmempty = false;
+
+		o = s.taboption('general', form.MultiValue, 'child', _('Children'),
+			_('The Children containing the ESP (phase 2) section'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var sections = uci.sections('ipsec', 'child');
+			if (sections.length == 0) {
+				this.value('', _('Please create a Children first'));
+			} else {
+				sections.forEach(L.bind(function (section) {
+					this.value(section['.name'], '%s (%s)'.format(section['.name'], section['mode']));
+				}, this));
+			}
+
+			return this.super('load', [section_id]);
+		};
+		o.rmempty = false;
+
+		o = s.taboption('authentication', form.MultiValue, 'local', _('Local Authentication'),
+			_('Local authentication sections used for this connection.') + ' ' +
+			_('Each section corresponds to one authentication round.'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var sections = uci.sections('ipsec', 'local');
+			if (sections.length == 0) {
+				this.value('', _('Please create a Local section first'));
+			} else {
+				sections.forEach(L.bind(function (section) {
+					this.value(section['.name']);
+				}, this));
+			}
+
+			return this.super('load', [section_id]);
+		};
+
+		o = s.taboption('authentication', form.MultiValue, 'remote', _('Remote Authentication'),
+			_('Remote authentication sections used for this connection.') + ' ' +
+			_('Each section corresponds to one authentication round.'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var sections = uci.sections('ipsec', 'remote');
+			if (sections.length == 0) {
+				this.value('', _('Please create a Remote section first'));
+			} else {
+				sections.forEach(L.bind(function (section) {
+					this.value(section['.name']);
+				}, this));
+			}
+
+			return this.super('load', [section_id]);
+		};
+		o.rmempty = false;
+
+		o = s.taboption('authentication', form.ListValue, 'send_cert', _('Send Certificate'),
+			_('Whether to send our own certificate to the remote peer'));
+		o.value('always');
+		o.value('ifasked');
+		o.value('never');
+		o.default = 'ifasked';
+		o.optional = true;
+		o.modalonly = true;
+
+		o = s.taboption('authentication', form.Flag, 'send_certreq', _('Send Certificate Request'),
+			_('Send certificate request payloads to offer trusted root CA certificates to the peer'));
+		o.default = '1';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Flag, 'mobike', _('MOBIKE'),
+			_('MOBIKE (IKEv2 Mobility and Multihoming Protocol)'));
+		o.default = '1';
+		o.modalonly = true;
+		o.depends('keyexchange', 'ikev2');
+		o.depends('keyexchange', 'ike');
+
+		o = s.taboption('advanced', form.ListValue, 'fragmentation', _('IKE Fragmentation'),
+			_('Use IKE fragmentation'));
+		o.value('yes');
+		o.value('no');
+		o.value('force');
+		o.value('accept');
+		o.default = 'yes';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'keyingtries', _('Keying Retries'),
+			_('Number of retransmissions attempts during initial negotiation'));
+		o.datatype = 'or(uinteger, "%forever")';
+		o.placeholder = '3';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'dpd_delay', _('DPD Delay'),
+			_('Interval to check liveness of a peer'));
+		o.validate = validateTimeFormat;
+		o.placeholder = '30s';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'inactivity', _('Inactivity'),
+			_('Interval before closing an inactive CHILD_SA'));
+		o.validate = validateTimeFormat;
+		o.placeholder = '0s';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'rekey_time', _('Rekey Time'),
+			_('IKEv2 interval to refresh keying material; also used to compute lifetime'));
+		o.validate = validateTimeFormat;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'over_time', _('Overtime'),
+			_('Limit on time to complete rekeying/reauthentication'));
+		o.validate = validateTimeFormat;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Flag, 'encap', _('ESP Encapsulation'),
+			_('To enforce UDP encapsulation of ESP packets, the IKE daemon can manipulate the NAT detection payloads.') + '<br />' +
+			_('This makes the peer believe that a NAT situation exist on the transmission path, forcing it to encapsulate ESP packets in UDP.') + '<br />' +
+			_('Usually this is not required but it can help to work around connectivity issues with too restrictive intermediary firewalls that block ESP packets.'));
+		o.modalonly = true;
+		o.default = '0';
+		o.rmempty = true;
+
+		o = s.taboption('advanced', form.ListValue, 'keyexchange', _('Keyexchange'),
+			_('Version of IKE for negotiation'));
+		o.value('ikev1', 'IKEv1 (%s)'.format(_('deprecated')));
+		o.value('ikev2', 'IKEv2');
+		o.value('ike', 'IKE (%s, %s)'.format(_('both'), _('deprecated')));
+		o.default = 'ikev2';
+		o.modalonly = true;
+
+		// Local Configuration
+		s = m.section(form.GridSection, 'local', _('Local'),
+			_('Define local IKE authentication rounds referenced from connections.'));
+		s.addremove = true;
+		s.nodescriptions = true;
+		s.renderSectionAdd = sectionNameCheck;
+
+		o = s.option(form.ListValue, 'auth', _('Authentication Method'),
+			_('IKE authentication (phase 1)'));
+		o.value('psk', 'Pre-shared Key');
+		o.value('pubkey', 'Public Key');
+		o.default = 'psk';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'id', _('Local Identifier'),
+			_('Local identifier for IKE (phase 1)'));
+		o.datatype = 'string';
+		o.placeholder = 'C=US, O=Acme Corporation, CN=headquarters';
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'certs', _('Local Certificate'),
+			_('Certificate to use for authentication, relative to /etc/swanctl/x509.'));
+		o.datatype = 'file';
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'key', _('Local Key'),
+			_('Private key to use with the certificate, relative to /etc/swanctl/private.'));
+		o.datatype = 'file';
+		o.modalonly = true;
+
+		// Remote Configuration
+		s = m.section(form.GridSection, 'remote', _('Remote'),
+			_('Define remote IKE authentication rounds referenced from connections.'));
+		s.addremove = true;
+		s.nodescriptions = true;
+		s.renderSectionAdd = sectionNameCheck;
+
+		o = s.option(form.ListValue, 'auth', _('Authentication Method'),
+			_('IKE authentication (phase 1)'));
+		o.value('psk', 'Pre-shared Key');
+		o.value('pubkey', 'Public Key');
+		o.value('eap-mschapv2', 'EAP MSCHAPv2');
+		o.value('eap-tls', 'EAP TLS');
+		o.default = 'psk';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'id', _('Remote Identifier'),
+			_('Remote identifier for IKE (phase 1)'));
+		o.datatype = 'string';
+		o.placeholder = 'C=US, O=Acme Corporation, CN=soho';
+		o.modalonly = true;
+
+		o = s.option(form.DynamicList, 'cacerts', _('Remote CA Certificates'),
+			_('Restrict the remote peer\'s certificate to be issued by one of these CAs'));
+		o.datatype = 'file';
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'eap_id', _('EAP ID'),
+			_('EAP identity to use with the remote peer'));
+		o.datatype = 'string';
+		o.default = '%any';
+		o.depends('auth', 'eap-mschapv2');
+		o.depends('auth', 'eap-tls');
+		o.modalonly = true;
+
+		// Children Configuration
+		s = m.section(form.GridSection, 'child', _('Children'),
+			_('Define Connection Children to be used in Remote Configurations.'));
+		s.addremove = true;
+		s.nodescriptions = true;
+		s.renderSectionAdd = sectionNameCheck;
+
+		o = s.tab('general', _('General'));
+		o = s.tab('advanced', _('Advanced'));
+
+		o = s.taboption('general', form.ListValue, 'mode', _('Child mode'));
+		o.rmempty = false;
+		o.value('tunnel', _('Tunnel'));
+		o.value('transport', _('Transport'));
+		o.default = 'tunnel';
+
+		o = s.taboption('general', form.DynamicList, 'local_ts', _('Local Traffic Selectors'),
+			_('Local network(s)'));
+		o.datatype = 'cidr';
+		o.placeholder = '192.168.1.1/24';
+		o.rmempty = false;
+
+		o = s.taboption('general', form.DynamicList, 'remote_ts', _('Remote Traffic Selectors'),
+			_('Remote network(s)'));
+		o.datatype = 'cidr';
+		o.placeholder = '192.168.2.1/24';
+		o.rmempty = false;
+
+		o = s.taboption('general', form.ListValue, 'if_id', ('XFRM Interface ID'),
+			_('XFRM interface ID set on input and output interfaces'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var xfrmSections = uci.sections('network').filter(function (section) {
+				return section.proto == 'xfrm';
+			});
+
+			xfrmSections.forEach(L.bind(function (section) {
+				this.value(section.ifid,
+					'%s (%s)'.format(section.ifid, section['.name']));
+			}, this));
+
+			return this.super('load', [section_id]);
+		}
+		o.optional = true;
+		o.modalonly = true;
+
+		o = s.taboption('general', form.ListValue, 'start_action', _('Start Action'),
+			_('Action on initial configuration load'));
+		o.value('', '%s (%s)'.format('none', _('default')));
+		o.value('trap');
+		o.value('start');
+		o.optional = true;
+		o.default = '';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('general', form.ListValue, 'close_action', _('Close Action'),
+			_('Action when CHILD_SA is closed'));
+		o.value('', '%s (%s)'.format('none', _('default')));
+		o.value('trap');
+		o.value('start');
+		o.optional = true;
+		o.default = '';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('general', form.MultiValue, 'crypto_proposal',
+			_('Crypto Proposal (Phase 2)'),
+			_('List of ESP (phase two) proposals. Only Proposals with checked ESP flag are selectable'));
+		o.load = function (section_id) {
+			this.keylist = [];
+			this.vallist = [];
+
+			var sections = uci.sections('ipsec', 'crypto_proposal').filter(function (section) {
+				return section.is_esp == '1';
+			});
+			if (sections.length == 0) {
+				this.value('', _('Please create an ESP Proposal first'));
+			} else {
+				sections.forEach(L.bind(function (section) {
+					this.value(section['.name']);
+				}, this));
+			}
+
+			return this.super('load', [section_id]);
+		};
+		o.rmempty = false;
+
+		o = s.taboption('advanced', form.Value, 'updown', _('Up/Down Script Path'),
+			_('Path to script to run on CHILD_SA up/down events'));
+		o.datatype = 'file';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.ListValue, 'dpd_action', _('DPD Action'),
+			_('Action when DPD timeout occurs'));
+		o.value('', '%s (%s)'.format('clear', _('default')));
+		o.value('trap');
+		o.value('start');
+		o.default = '';
+		o.rmempty = true;
+		o.optional = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'rekey_time', _('Rekey Time'),
+			_('Interval before a CHILD_SA is rekeyed.') + ' ' +
+			_('Also used to derive lifetime (110% of this value).') + '<br />' +
+			_('If not configured, the default value is "1h".')
+		);
+		o.placeholder = '1h';
+		o.validate = validateTimeFormat;
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'life_time', _('Life Time'),
+			_('Maximum time before the CHILD_SA gets closed, as a hard limit.')
+		);
+		o.validate = validateTimeFormat;
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Flag, 'ipcomp', _('IPComp'),
+			_('Enable ipcomp compression'));
+		o.default = '0';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.ListValue, 'hw_offload', _('H/W Offload'),
+			_('Enable Hardware offload'));
+		o.value('yes');
+		o.value('no');
+		o.value('auto');
+		o.optional = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'priority', _('Priority'),
+			_('Priority of the CHILD_SA'));
+		o.datatype = 'uinteger';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'replay_window', _('Replay Window'),
+			'%s; %s'.format(_('Replay Window of the CHILD_SA'),
+				_('Values larger than 32 are supported by the Netlink backend only')));
+		o.datatype = 'uinteger';
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'rekey_bytes', _('Rekey Bytes'),
+			_('Number of bytes processed before initiating CHILD_SA rekeying.') + ' ' +
+			_('Also used to derive lifebytes if set (110% of this value).') + ' ' +
+			_('Use "0" to disable byte based rekeying.')
+		);
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'life_bytes', _('Life Bytes'),
+			_('Maximum number of bytes processed before the CHILD_SA gets closed.') + ' ' +
+			_('Use "0" to disable (default).')
+		);
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'rekey_packets', _('Rekey Packets'),
+			_('Number of packets processed before initiating CHILD_SA rekeying.') + ' ' +
+			_('Also used to derive lifepackets if set (110% of this value).') + ' ' +
+			_('Use "0" to disable packet based rekeying (default).')
+		);
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.taboption('advanced', form.Value, 'life_packets', _('Life Packets'),
+			_('Maximum number of packets processed before the CHILD_SA gets closed.') + ' ' +
+			_('Use "0" to disable (default).')
+		);
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.rmempty = true;
+		o.modalonly = true;
+
+		// Crypto Proposals
+		s = m.section(form.GridSection, 'crypto_proposal',
+			_('Encryption Proposals'),
+			_('Configure Cipher Suites to define IKE (Phase 1) or ESP (Phase 2) Proposals.'));
+		s.addremove = true;
+		s.nodescriptions = true;
+		s.renderSectionAdd = sectionNameCheck;
+
+		o = s.option(form.Flag, 'is_esp', _('ESP Proposal'),
+			_('Whether this is an ESP (phase 2) proposal or not'));
+
+		o = s.option(form.Flag, 'use_custom_proposal', _('Use custom proposal'),
+			_('When enabled, you can specify your own proposal string.'));
+		o.default = '0';
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'custom_proposal', _('Custom proposal'),
+			_('Using this option only if you know exactly what you are doing.') + '<br />' +
+			_('Manually defining a proposal can break compatibility with peers or cause connection failures.') + '<br />' +
+			_('Using this setting may prevent future updates or migrations.') + '<br />' +
+			_('You are responsible for maintaining compatibility!'));
+		o.depends('use_custom_proposal', '1');
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'encryption_algorithm',
+			_('Encryption Algorithm'),
+			_('Algorithms marked with * are considered insecure'));
+		o.default = 'aes256gcm128';
+		o.depends('use_custom_proposal', '0');
+		addAlgorithms(o, algorithms.encryption);
+		addAlgorithms(o, algorithms.aead);
+
+		const encryptionAlgorithmNames = algorithms.encryption?.map(algorithm => algorithm.name);
+		o = s.option(form.ListValue, 'hash_algorithm', _('Hash Algorithm'),
+			_('Algorithms marked with * are considered insecure'));
+		encryptionAlgorithmNames?.forEach(function (algorithmName) {
+			o.depends({'encryption_algorithm': algorithmName, 'use_custom_proposal': '0'});
+		});
+		o.default = 'sha512';
+		o.rmempty = false;
+		addAlgorithms(o, algorithms.integrity);
+
+		o = s.option(form.ListValue, 'dh_group', _('Diffie-Hellman Group'),
+			_('Algorithms marked with * are considered insecure'));
+		o.default = 'modp3072';
+		o.depends('use_custom_proposal', '0');
+		addAlgorithms(o, algorithms.ke);
+
+		o = s.option(form.ListValue, 'prf_algorithm', _('PRF Algorithm'),
+			_('Algorithms marked with * are considered insecure'));
+		o.validate = function (section_id, value) {
+			const encryptionAlgorithm = this.section.formvalue(section_id, 'encryption_algorithm');
+			const aeadAlgorithmNames = algorithms.aead?.map(algorithm => algorithm.name);
+
+			if (aeadAlgorithmNames?.includes(encryptionAlgorithm) && !value) {
+				return _('PRF Algorithm must be configured when using an Authenticated Encryption Algorithm');
+			}
+
+			return true;
+		};
+		o.optional = true;
+		o.depends({'is_esp': '0', 'use_custom_proposal': '0'});
+		addAlgorithms(o, algorithms.prf);
+
+		return m.render().then(function (node) {
+			if (legacyConfig)
+				showMigrationOverlay(node);
+			return node;
+		});
+	}
+});

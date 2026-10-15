@@ -1,0 +1,169 @@
+From: LG6851F MT6990 enablement
+Subject: [PATCH] mt76: mt7996: connect MT6990 vendor HNAT to WED TX
+
+Supply WDMA, BSS, WCID and ring information for vendor PPE learning.
+Keep WED opt-in and disable WED v3 hardware RRO on MT6990. Invalidate
+learned station flows before WCIDs can be reused.
+
+--- a/mt7996/mmio.c
++++ b/mt7996/mmio.c
+@@ -13,9 +13,11 @@
+ #include "mcu.h"
+ #include "../trace.h"
+ #include "../dma.h"
++#include <linux/of.h>
+ 
+ static bool wed_enable;
+ module_param(wed_enable, bool, 0644);
++MODULE_PARM_DESC(wed_enable, "Enable WED explicitly after board validation");
+ 
+ static const struct __base mt7996_reg_base[] = {
+ 	[WF_AGG_BASE]		= { { 0x820e2000, 0x820f2000, 0x830e2000 } },
+@@ -453,6 +455,18 @@
+ }
+ #endif
+ 
++#ifdef CONFIG_NET_MEDIATEK_SOC_WED
++static u32 mt7996_mt6990_hif2_init_buf(void *ptr, dma_addr_t phys, int token)
++{
++	u32 len = mt7996_wed_init_buf(ptr, phys, token);
++	__le32 *txd = ptr;
++
++	/* F370 WED 2.3 uses TXD6 SRC[9:8] to identify the slave HIF. */
++	txd[6] = cpu_to_le32(BIT(8));
++	return len;
++}
++#endif
++
+ int mt7996_mmio_wed_init(struct mt7996_dev *dev, void *pdev_ptr,
+ 			 bool hif2, int *irq)
+ {
+@@ -460,18 +474,20 @@
+ 	struct mtk_wed_device *wed = &dev->mt76.mmio.wed;
+ 	struct pci_dev *pci_dev = pdev_ptr;
+ 	u32 hif1_ofs;
++	bool mt6990 = of_machine_is_compatible("mediatek,mt6990");
+ 
+ 	if (!wed_enable)
+ 		return 0;
+ 
+-	dev->mt76.hwrro_mode = is_mt7996(&dev->mt76) ? MT76_HWRRO_V3
+-						     : MT76_HWRRO_V3_1;
++	dev->mt76.hwrro_mode = mt6990 ? MT76_HWRRO_OFF :
++		(is_mt7996(&dev->mt76) ? MT76_HWRRO_V3 : MT76_HWRRO_V3_1);
+ 
+ 	hif1_ofs = dev->hif2 ? MT_WFDMA0_PCIE1(0) - MT_WFDMA0(0) : 0;
+ 
+ 	if (hif2)
+ 		wed = &dev->mt76.mmio.wed_hif2;
+ 
++	wed->wlan.vendor_hnat = mt6990;
+ 	wed->wlan.pci_dev = pci_dev;
+ 	wed->wlan.bus_type = MTK_WED_BUS_PCIE;
+ 
+@@ -600,7 +616,8 @@
+ 	wed->wlan.amsdu_max_subframes = 8;
+ 	wed->wlan.amsdu_max_len = 1536;
+ 
+-	wed->wlan.init_buf = mt7996_wed_init_buf;
++	wed->wlan.init_buf = mt6990 && hif2 ?
++		mt7996_mt6990_hif2_init_buf : mt7996_wed_init_buf;
+ 	wed->wlan.init_rx_buf = mt76_wed_init_rx_buf;
+ 	wed->wlan.release_rx_buf = mt76_wed_release_rx_buf;
+ 	wed->wlan.offload_enable = mt76_wed_offload_enable;
+@@ -615,6 +632,15 @@
+ 		return 0;
+ 	}
+ 
++ if (wed->wlan.vendor_hnat) {
++  /* Vendor flow learning does not call the mainline TC flow counter. */
++  int ret = mt76_wed_offload_enable(wed);
++  if (ret) {
++   mtk_wed_device_detach(wed);
++   dev->mt76.hwrro_mode = MT76_HWRRO_OFF;
++   return 0;
++  }
++ }
+ 	*irq = wed->irq;
+ 	dev->mt76.dma_dev = wed->dev;
+ 
+--- a/mt7996/mac.c
++++ b/mt7996/mac.c
+@@ -7,6 +7,7 @@
+ #include <linux/timekeeping.h>
+ #include "coredump.h"
+ #include "mt7996.h"
++#include <linux/soc/mediatek/mtk_hnat.h>
+ #include "../dma.h"
+ #include "mac.h"
+ #include "mcu.h"
+@@ -1055,6 +1056,23 @@
+ 		}
+ 	}
+ 
++#ifdef CONFIG_NET_MEDIATEK_SOC_WED
++ if (is_8023 && sta && vif && !sta->mlo &&
++     wcid->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
++  struct mtk_wed_device *wed = &mdev->mmio.wed;
++  struct mt76_vif_link *link;
++
++  if (dev->hif2 && ((is_mt7996(mdev) && wcid->phy_idx == MT_BAND2) ||
++                   (is_mt7992(mdev) && wcid->phy_idx == MT_BAND1)))
++   wed = &mdev->mmio.wed_hif2;
++  link = rcu_dereference(mvif->mt76.link[wcid->link_id]);
++  if (link && mtk_wed_device_active(wed) && wed->wlan.vendor_hnat &&
++      mtk_hnat_wifi_tx(tx_info->skb, wed->wdma_idx, link->idx,
++                       wcid->idx, 0))
++   return -ECANCELED;
++ }
++#endif
++
+ 	t = (struct mt76_txwi_cache *)(txwi + mdev->drv->txwi_size);
+ 	t->skb = tx_info->skb;
+ 
+--- a/mt7996/main.c
++++ b/mt7996/main.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "mt7996.h"
++#include <linux/soc/mediatek/mtk_hnat.h>
+ #include "mcu.h"
+ #include "mac.h"
+ 
+@@ -1446,6 +1447,10 @@
+ 	int i;
+ 
+ 	mutex_lock(&dev->mt76.mutex);
++#ifdef CONFIG_NET_MEDIATEK_SOC_WED
++ if (dev->mt76.mmio.wed.wlan.vendor_hnat)
++  mtk_hnat_wifi_flush(sta->addr);
++#endif
+ 	for (i = 0; i < ARRAY_SIZE(msta->link); i++)
+ 		mt7996_mac_sta_remove_link(dev, sta, i, true);
+ 	mutex_unlock(&dev->mt76.mutex);
+--- a/mt7996/init.c
++++ b/mt7996/init.c
+@@ -651,9 +651,19 @@
+ 		mt7996_mcu_set_rro(dev, UNI_RRO_SET_TXFREE_PATH, 1);
+ 	}
+ 
+-	mt7996_mcu_wa_cmd(dev, MCU_WA_PARAM_CMD(SET),
+-			  MCU_WA_PARAM_HW_PATH_HIF_VER,
+-			  HIF_TXD_V2_1, 0);
++#ifdef CONFIG_NET_MEDIATEK_SOC_WED
++	/* WED 2.3 on MT6990 produces the SDK HIF TXD v0.1 format. */
++	if (mtk_wed_device_active(&dev->mt76.mmio.wed) &&
++	    dev->mt76.mmio.wed.wlan.vendor_hnat) {
++		mt7996_mcu_wa_cmd(dev, MCU_WA_PARAM_CMD(SET),
++				  MCU_WA_PARAM_HW_PATH_HIF_VER, 0x01, 0);
++	} else
++#endif
++	{
++		mt7996_mcu_wa_cmd(dev, MCU_WA_PARAM_CMD(SET),
++				  MCU_WA_PARAM_HW_PATH_HIF_VER,
++				  HIF_TXD_V2_1, 0);
++	}
+ 
+ 	for (i = MT_BAND0; i <= MT_BAND2; i++)
+ 		mt7996_mac_init_band(dev, i);

@@ -1,0 +1,52 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Read THIS unit's original factory partition; never write factory/NV partitions.
+set -eu
+umask 077
+dest=/tmp/lg6851f-vendor618/firmware/lg6851f-board-e2p
+mnt=/tmp/lg6851f-public-factory-ro
+source=
+mounted=0
+cleanup() { [ "$mounted" = 0 ] || umount "$mnt"; }
+trap cleanup EXIT
+valid() {
+ [ -f "$1" ] && [ "$(wc -c < "$1")" = 987136 ]
+}
+if valid /fhdata/wlan/e2p; then
+ source=/fhdata/wlan/e2p
+else
+ part=/sys/class/block/mmcblk0p44
+ [ -b /dev/mmcblk0p44 ] && grep -qx 'PARTNAME=fh_data' "$part/uevent" &&
+ [ "$(cat "$part/size")" = 327680 ] || {
+  logger -t lg6851f-public 'Factory partition layout mismatch; Wi-Fi not started';exit 1;
+ }
+ mkdir -p "$mnt"
+ mount -t ext4 -o ro,noload /dev/mmcblk0p44 "$mnt" || exit 1
+ mounted=1
+ valid "$mnt/wlan/e2p" || {
+  logger -t lg6851f-public 'Own wlan/e2p missing or unexpected size; restore own factory backup';exit 1;
+ }
+ source="$mnt/wlan/e2p"
+fi
+mkdir -p "${dest%/*}"
+cp "$source" "$dest.new"
+chmod 600 "$dest.new"
+mv -f "$dest.new" "$dest"
+# Static factory profile MACs were donor-specific. Derive stable, unicast,
+# locally administered AP addresses from this unit, without publishing its CID.
+cid=/sys/class/block/mmcblk0/device/cid
+[ -s "$cid" ] || { logger -t lg6851f-public 'Missing eMMC CID; refusing shared default AP MAC';exit 1; }
+seed="$( { cat "$cid"; sha256sum "$dest"; } | sha256sum | cut -c1-12)"
+[ "${#seed}" = 12 ] || exit 1
+tail="$(printf '%s' "$seed" | cut -c3-12 | sed 's/../&:/g;s/:$//')"
+for base in /tmp/lg6851f-vendor618/wireless /tmp/lg6851f-vendor618/firmware; do
+ for pair in 'lg6851f24.dat 02' 'lg6851f5.dat 06'; do
+  set -- $pair
+  profile="$base/mediatek/$1"
+  [ -f "$profile" ] || continue
+  sed -i '/^MacAddress=/d' "$profile"
+  printf 'MacAddress=%s:%s\n' "$2" "$tail" >> "$profile"
+ done
+done
+logger -t lg6851f-public 'Loaded this unit factory Wi-Fi calibration read-only'
+

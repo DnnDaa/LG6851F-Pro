@@ -1,0 +1,6 @@
+#!/bin/sh
+uci -q set fiberhomedash.main.refresh_interval='5'
+uci -q commit fiberhomedash
+# LuCI menu cache may contain the removed top-level PWM/band pages.
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* /tmp/luci-modulecache/*
+exit 0

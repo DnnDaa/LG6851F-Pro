@@ -1,0 +1,15 @@
+{
+  "admin/home": {
+    "title": "Status dashboard",
+    "order": 5,
+    "action": {
+      "type": "view",
+      "path": "fiberhome/home_v20261015_1"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-fiberhome"
+      ]
+    }
+  }
+}

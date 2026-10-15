@@ -1,0 +1,8 @@
+#!/bin/sh /etc/rc.common
+START=01
+start() {
+ # The original driver exclusively owns Wi-Fi. No fallback or reboot timer.
+ mkdir -p /etc/lg6851f-vendor618
+ touch /etc/lg6851f-vendor618/enabled /tmp/lg6851f-vendor618-active
+ rm -f /etc/lg6851f-vendor618/boot-pending
+}

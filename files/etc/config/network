@@ -1,0 +1,27 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	list ipaddr '127.0.0.1/8'
+
+config globals 'globals'
+	option dhcp_default_duid '0004cd2c7d951f0e51138082232f3ae9b111'
+	option ula_prefix 'fd20:c125:94d1::/48'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	option ports 'eth0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	list ipaddr '192.168.1.1/24'
+	option ip6assign '60'
+
+config interface 'modem5g'
+	option proto 'ql_datacall'
+	option apn '3gnet'
+	option mtu '1400'
+	option plmn '460001'
+

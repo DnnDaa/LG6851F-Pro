@@ -1,0 +1,79 @@
+#!/bin/sh
+# CPU0..CPU3 share policy0. Only validated firmware OPPs can be selected.
+P=/sys/devices/system/cpu/cpufreq/policy0
+CFG=lg6851f-cpufreq
+fail() { logger -t lg6851f-cpufreq "$*"; echo "$*" >&2; exit 1; }
+number() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
+present() { case " $2 " in *" $1 "*) return 0;; *) return 1;; esac; }
+
+apply() {
+	[ -r "$P/scaling_driver" ] || fail 'CPUFreq policy is unavailable; no frequency changed'
+	[ "$(cat "$P/scaling_driver")" = lg6851f-mtk-hw ] || fail 'Unexpected CPUFreq driver'
+	[ "$(cat "$P/hardware_cooling_ready" 2>/dev/null)" = 1 ] || fail 'CPU cooling unavailable; profile not applied'
+	mode="$(uci -q get "$CFG.main.mode")"
+	case "$mode" in quiet|balanced|performance) ;; *) fail 'Invalid CPU profile';; esac
+	governor="$(uci -q get "$CFG.$mode.governor")"
+	min="$(uci -q get "$CFG.$mode.min_freq")"
+	max="$(uci -q get "$CFG.$mode.max_freq")"
+	number "$min" && number "$max" || fail 'Invalid CPU frequency value'
+	[ "$min" -le "$max" ] || fail 'Minimum CPU frequency exceeds maximum'
+	frequencies="$(cat "$P/scaling_available_frequencies")"
+	present "$min" "$frequencies" && present "$max" "$frequencies" || fail 'Frequency is absent from firmware LUT'
+	present "$governor" "$(cat "$P/scaling_available_governors")" || fail 'Unavailable CPU governor'
+	oldmin="$(cat "$P/scaling_min_freq")"
+	oldmax="$(cat "$P/scaling_max_freq")"
+	oldgov="$(cat "$P/scaling_governor")"
+	# Apply max/min in a valid order. Thermal QoS may reduce the effective maximum.
+	if [ "$min" -gt "$oldmax" ]; then
+		printf '%s\n' "$max" > "$P/scaling_max_freq" || fail 'Unable to change CPU maximum'
+		if ! printf '%s\n' "$min" > "$P/scaling_min_freq"; then
+			printf '%s\n' "$oldmax" > "$P/scaling_max_freq"
+			fail 'Unable to change CPU minimum'
+		fi
+	else
+		printf '%s\n' "$min" > "$P/scaling_min_freq" || fail 'Unable to change CPU minimum'
+		if ! printf '%s\n' "$max" > "$P/scaling_max_freq"; then
+			printf '%s\n' "$oldmin" > "$P/scaling_min_freq"
+			fail 'Unable to change CPU maximum'
+		fi
+	fi
+	if ! printf '%s\n' "$governor" > "$P/scaling_governor"; then
+		printf '%s\n' "$(cat "$P/cpuinfo_min_freq")" > "$P/scaling_min_freq"
+		printf '%s\n' "$oldmax" > "$P/scaling_max_freq"
+		printf '%s\n' "$oldmin" > "$P/scaling_min_freq"
+		printf '%s\n' "$oldgov" > "$P/scaling_governor"
+		fail 'Unable to select CPU governor; prior settings restored'
+	fi
+}
+
+status() {
+	. /usr/share/libubox/jshn.sh
+	json_init
+	json_add_string mode "$(uci -q get "$CFG.main.mode")"
+	json_add_string online "$(cat /sys/devices/system/cpu/online 2>/dev/null)"
+	if [ -r "$P/scaling_driver" ]; then
+		json_add_boolean supported 1
+		for key in scaling_driver scaling_governor related_cpus scaling_available_frequencies scaling_available_governors; do
+			json_add_string "$key" "$(cat "$P/$key" 2>/dev/null)"
+		done
+		for key in scaling_cur_freq cpu_pll_cur_freq scaling_min_freq scaling_max_freq cpuinfo_min_freq cpuinfo_max_freq hardware_cooling_ready; do
+			value="$(cat "$P/$key" 2>/dev/null)"
+			number "$value" || value=0
+			json_add_int "$key" "$value"
+		done
+	else
+		json_add_boolean supported 0
+		stage="$(cat /sys/module/lg6851f_cpufreq_hw/parameters/probe_stage 2>/dev/null)"
+		errno="$(cat /sys/module/lg6851f_cpufreq_hw/parameters/probe_errno 2>/dev/null)"
+		[ -n "$stage" ] || stage=module_unavailable
+		json_add_string probe_stage "$stage"
+		json_add_string probe_errno "$errno"
+		json_add_string error "硬件调频未建立 policy0；初始化阶段：$stage；错误码：${errno:-未知}。当前无法应用 CPU 档位。"
+	fi
+	json_dump
+}
+case "$1" in
+	apply) apply;;
+	status) status;;
+	*) echo "Usage: $0 {status|apply}" >&2; exit 2;;
+esac

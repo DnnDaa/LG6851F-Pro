@@ -1,0 +1,8 @@
+#!/bin/sh
+# Only light controls are updated; no network reload or modem commands.
+/usr/bin/ucode /usr/share/rpcd/ucode/luci.lg6851f-led migrate || exit 1
+/etc/init.d/lg6851f-led-preferences enable
+/etc/init.d/lg6851f-led-preferences start
+/etc/init.d/lg6851f-network-led restart
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* /tmp/luci-modulecache/*
+exit 0

@@ -1,0 +1,7 @@
+{
+  "luci-app-lg6851f-cpufreq": {
+    "description": "LG6851F CPU frequency profiles",
+    "read": { "ubus": { "lg6851f.cpufreq": ["status"] }, "uci": ["lg6851f-cpufreq"] },
+    "write": { "uci": ["lg6851f-cpufreq"] }
+  }
+}

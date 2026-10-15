@@ -1,0 +1,16 @@
+[
+  "make",
+  "-C",
+  "/root/build/owrt/build_dir/target-aarch64_cortex-a55+neon-vfpv4_musl/linux-mediatek_mt6990/linux-6.18.44",
+  "-j8",
+  "ARCH=arm64",
+  "CROSS_COMPILE=/root/build/owrt/staging_dir/toolchain-aarch64_cortex-a55+neon-vfpv4_gcc-14.4.0_musl/bin/aarch64-openwrt-linux-musl-",
+  "KCFLAGS=-fmacro-prefix-map=/root/build/owrt/build_dir/target-aarch64_cortex-a55+neon-vfpv4_musl=target-aarch64_cortex-a55+neon-vfpv4_musl -fno-caller-saves",
+  "HOSTCFLAGS=-O2 -I/root/build/owrt/staging_dir/host/include -Wall -Wmissing-prototypes -Wstrict-prototypes",
+  "KBUILD_HAVE_NLS=no",
+  "KBUILD_HOSTLDFLAGS=-L/root/build/owrt/staging_dir/host/lib",
+  "CONFIG_SHELL=bash",
+  "cmd_syscalls=",
+  "KERNELRELEASE=6.18.44",
+  "Image"
+]

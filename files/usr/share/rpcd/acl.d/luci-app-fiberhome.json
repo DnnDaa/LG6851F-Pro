@@ -1,0 +1,19 @@
+{
+  "luci-app-fiberhome": {
+    "description": "Read the LG6851F dashboard and lightweight traffic samples",
+    "read": {
+      "ubus": {
+        "fiberhomedash": [
+          "status",
+          "traffic",
+          "signal",
+          "sysinfo"
+        ]
+      },
+      "uci": [
+        "luci",
+        "fiberhomedash"
+      ]
+    }
+  }
+}

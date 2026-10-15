@@ -1,0 +1,10 @@
+/usr/share/luci/menu.d/luci-app-nikki.json
+/usr/share/rpcd/acl.d/luci-app-nikki.json
+/usr/share/rpcd/ucode/luci.nikki
+/www/luci-static/resources/tools/nikki.js
+/www/luci-static/resources/view/nikki/app.js
+/www/luci-static/resources/view/nikki/editor.js
+/www/luci-static/resources/view/nikki/log.js
+/www/luci-static/resources/view/nikki/mixin.js
+/www/luci-static/resources/view/nikki/profile.js
+/www/luci-static/resources/view/nikki/proxy.js

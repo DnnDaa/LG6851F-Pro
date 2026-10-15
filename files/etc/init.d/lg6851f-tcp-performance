@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+START=18
+STOP=01
+
+start() {
+ local modules=/lib/modules/$(uname -r)
+ if [ ! -d /sys/module/tcp_bbr ]; then
+  modprobe tcp_bbr 2>/dev/null || {
+   [ ! -f "$modules/tcp_bbr.ko" ] || insmod "$modules/tcp_bbr.ko" || return 1
+  }
+ fi
+ sysctl -p /etc/sysctl.d/30-lg6851f-tcp-performance.conf >/dev/null || return 1
+ if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control; then
+  sysctl -q -w net.ipv4.tcp_congestion_control=bbr
+ else
+  logger -t lg6851f-tcp-performance 'Matching BBR module unavailable; retaining current TCP congestion control'
+  return 1
+ fi
+}

@@ -1,0 +1,467 @@
+#!/bin/sh
+
+# Auto-detect the fitted LG6851F fan PWM route and polarity using the stock
+# GPIO121 tachometer.  One physical fan exists; PWM0 and PWM5 are alternate
+# production-routing candidates.
+
+STATE=/tmp/lg6851f-fan-control.state
+STOP=/tmp/lg6851f-fan-control.stop
+RECALIBRATE=/tmp/lg6851f-fan-control.recalibrate
+MANUAL=/tmp/lg6851f-fan-control.manual
+P0=
+P5=
+TACH=
+ACTIVE=
+DIRECTION=
+TACH_VALID=0
+FAN_TYPE=unknown
+
+# MT6990 PWM5 channel registers, verified against the stock mt69xx SDK and
+# the three-wire production unit.  The normal pwm-fan ABI is too coarse for
+# this external fan driver, whose useful thresholds sit between PWM 1..4.
+PWM5_CON=0x120161c0
+PWM5_WIDTH=0x120161ec
+PWM5_THRESH=0x120161f0
+PWM5_10KHZ_WIDTH=0x1aa9
+
+log() { logger -t lg6851f-fan-control -- "$*"; }
+
+discover() {
+	for f in /sys/devices/platform/pwm-fan/hwmon/hwmon*/pwm1; do
+		[ -e "$f" ] && P0="$f" && TACH="${f%/pwm1}/fan1_input"
+	done
+	for f in /sys/devices/platform/pwm-fan-aux/hwmon/hwmon*/pwm1; do
+		[ -e "$f" ] && P5="$f"
+	done
+	# The three-wire production variant has no tachometer feedback.  Route
+	# discovery must therefore not reject it merely because fan1_input is
+	# absent; the four-wire calibration checks the tachometer separately.
+	[ -n "$P0" ] && [ -n "$P5" ]
+}
+
+set_both() {
+	echo "$1" > "$P0"
+	echo "$1" > "$P5"
+}
+
+rpm() {
+	local value
+	value=$(cat "$TACH" 2>/dev/null)
+	case "$value" in ''|*[!0-9]*) echo 0;; *) echo "$value";; esac
+}
+
+sample_rpm() {
+	local a b c
+	# fan1_input and the rotor both lag a PWM transition.  Sampling after only
+	# one second can compare the previous speed with the new duty cycle and
+	# invert the detected polarity.  Give the fan time to settle, then average
+	# three spaced readings so route calibration never depends on one stale
+	# tachometer update.
+	sleep 6
+	a=$(rpm); sleep 2; b=$(rpm); sleep 2; c=$(rpm)
+	echo $(((a + b + c) / 3))
+}
+
+absolute() {
+	[ "$1" -lt 0 ] && echo $((-1 * $1)) || echo "$1"
+}
+
+hottest() {
+	local zone f type value max=0
+	# Keep the control curve and LuCI gauge on the same source: the hottest
+	# cpu_little core.  Fall back to every valid sensor only if CPU zones are
+	# unavailable, so a thermal-driver regression cannot leave the fan idle.
+	for zone in /sys/class/thermal/thermal_zone*; do
+		[ -r "$zone/type" ] && [ -r "$zone/temp" ] || continue
+		type=$(cat "$zone/type" 2>/dev/null)
+		case "$type" in cpu_little[0-9]*) ;; *) continue;; esac
+		value=$(cat "$zone/temp" 2>/dev/null)
+		case "$value" in ''|*[!0-9]*) continue;; esac
+		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
+	done
+	[ "$max" -gt 0 ] && { echo "$max"; return; }
+
+	for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
+		[ -r "$f" ] || continue
+		value=$(cat "$f" 2>/dev/null)
+		case "$value" in ''|*[!0-9]*) continue;; esac
+		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
+	done
+	echo "$max"
+}
+
+hottest_all() {
+	local f value max=0
+	for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
+		[ -r "$f" ] || continue
+		value=$(cat "$f" 2>/dev/null)
+		case "$value" in ''|*[!0-9]*) continue;; esac
+		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
+	done
+	echo "$max"
+}
+
+detect_fan_type() {
+	local chip base ngpio gpio exported=0 value
+	for chip in /sys/class/gpio/gpiochip*; do
+		[ "$(cat "$chip/label" 2>/dev/null)" = pinctrl_paris ] || continue
+		base=$(cat "$chip/base" 2>/dev/null)
+		ngpio=$(cat "$chip/ngpio" 2>/dev/null)
+		case "$base:$ngpio" in *[!0-9:]*|:*) continue;; esac
+		[ 193 -lt "$ngpio" ] || continue
+		gpio=$((base + 193))
+		if [ ! -d "/sys/class/gpio/gpio$gpio" ]; then
+			echo "$gpio" > /sys/class/gpio/export 2>/dev/null || continue
+			exported=1
+			sleep 1
+		fi
+		echo in > "/sys/class/gpio/gpio$gpio/direction" 2>/dev/null
+		value=$(cat "/sys/class/gpio/gpio$gpio/value" 2>/dev/null)
+		[ "$exported" -eq 1 ] && echo "$gpio" > /sys/class/gpio/unexport 2>/dev/null
+		case "$value" in 0) echo 3wire; return;; 1) echo 4wire; return;; esac
+	done
+	echo unknown
+}
+
+raw_write() {
+	/usr/bin/lg6851f-memtool write32 "$1" "$2" I_UNDERSTAND >/dev/null 2>&1
+}
+
+set_threewire_point() {
+	local threshold="$1"
+	# Let pwm-fan enable PWM5, then replace its coarse period/threshold with
+	# the physically verified 10 kHz fine-control point.
+	echo 3 > "$P5"
+	raw_write "$PWM5_CON" 0x00008000 || return 1
+	raw_write "$PWM5_WIDTH" "$PWM5_10KHZ_WIDTH" || return 1
+	raw_write "$PWM5_THRESH" "$threshold"
+}
+
+write_threewire_state() {
+	local status="$1" temp="$2" point="$3" threshold="$4"
+	{
+		echo "status=$status"
+		echo "fan_type=3wire"
+		echo "active=pwm5"
+		echo "direction=hardware-10khz-raw"
+		echo "temperature=$temp"
+		echo "speed_point=$point"
+		echo "threshold=$threshold"
+		echo "period_count=6825"
+		echo "rpm=0"
+		echo "tach_valid=0"
+	} > "$STATE"
+}
+
+threewire_loop() {
+	local temp manual point=low threshold=8 status=automatic last=
+	FAN_TYPE=3wire ACTIVE=pwm5 DIRECTION=hardware-10khz-raw TACH_VALID=0
+	echo 100 > "$P0"
+	trap 'set_threewire_point 12; exit 0' TERM INT
+	log "stock GPIO193 selected three-wire PWM5 hardware control"
+	while [ ! -e "$STOP" ]; do
+		temp=$(hottest_all)
+		manual=$(cat "$MANUAL" 2>/dev/null)
+		case "$manual" in
+			115) point=low; threshold=8; status=manual-silent;;
+			180) point=medium; threshold=10; status=manual-standard;;
+			220) point=high; threshold=12; status=manual-performance;;
+			*)
+				status=automatic
+				if [ "$temp" -le 0 ]; then
+					point=high
+				elif [ "$point" = low ] && [ "$temp" -ge 55000 ]; then
+					point=medium
+				elif [ "$point" = medium ] && [ "$temp" -ge 70000 ]; then
+					point=high
+				elif [ "$point" = high ] && [ "$temp" -le 65000 ]; then
+					point=medium
+				elif [ "$point" = medium ] && [ "$temp" -le 50000 ]; then
+					point=low
+				fi
+				case "$point" in low) threshold=8;; medium) threshold=10;; *) threshold=12;; esac
+				[ "$temp" -gt 0 ] || status=sensor-failsafe
+				;;
+		esac
+		if [ "$point:$threshold" != "$last" ]; then
+			set_threewire_point "$threshold" || {
+				status=register-failsafe
+				set_threewire_point 12
+			}
+			log "three-wire temperature=$temp point=$point threshold=$threshold"
+			last="$point:$threshold"
+		fi
+		write_threewire_state "$status" "$temp" "$point-10khz" "$threshold"
+		[ -e "$RECALIBRATE" ] && rm -f "$RECALIBRATE"
+		sleep 5
+	done
+	set_threewire_point 12
+}
+
+write_state() {
+	local status="$1" temp="$2" speed="$3" p0 p5
+	p0=$(cat "$P0" 2>/dev/null); p5=$(cat "$P5" 2>/dev/null)
+	{
+		echo "status=$status"
+		echo "fan_type=${FAN_TYPE:-unknown}"
+		echo "active=${ACTIVE:-unknown}"
+		echo "direction=${DIRECTION:-unknown}"
+		echo "temperature=$temp"
+		echo "rpm=$speed"
+		echo "tach_valid=$TACH_VALID"
+		echo "pwm0=$p0"
+		echo "pwm5=$p5"
+	} > "$STATE"
+}
+
+calibrate() {
+	local base r0 r5 d0 d5 a0 a5 temp
+	temp=$(hottest)
+	if [ "$temp" -ge 80000 ]; then
+		log "temperature=$temp too high for route calibration; keeping PWM100"
+		return 1
+	fi
+	set_both 100
+	base=$(sample_rpm)
+	[ "$base" -gt 0 ] || return 1
+
+	echo 170 > "$P0"
+	r0=$(sample_rpm)
+	echo 100 > "$P0"
+	sleep 2
+
+	echo 170 > "$P5"
+	r5=$(sample_rpm)
+	echo 100 > "$P5"
+	sleep 2
+
+	d0=$((r0 - base)); d5=$((r5 - base))
+	a0=$(absolute "$d0"); a5=$(absolute "$d5")
+
+	# Require a meaningful RPM response; otherwise remain in safe fallback.
+	if [ "$a0" -lt 120 ] && [ "$a5" -lt 120 ]; then
+		log "calibration inconclusive: base=$base pwm0=$r0 pwm5=$r5"
+		return 1
+	fi
+
+	if [ "$a0" -ge "$a5" ]; then
+		ACTIVE=pwm0
+		[ "$d0" -gt 0 ] && DIRECTION=direct || DIRECTION=inverse
+	else
+		ACTIVE=pwm5
+		[ "$d5" -gt 0 ] && DIRECTION=direct || DIRECTION=inverse
+	fi
+	log "calibrated active=$ACTIVE direction=$DIRECTION base=$base pwm0_test=$r0 pwm5_test=$r5"
+	return 0
+}
+
+calibrate_fourwire() {
+	local base test delta magnitude temp
+	temp=$(hottest)
+	[ "$temp" -lt 80000 ] || return 1
+	echo 100 > "$P5"
+	echo 100 > "$P0"
+	base=$(sample_rpm)
+	[ "$base" -gt 0 ] || return 1
+	echo 170 > "$P0"
+	test=$(sample_rpm)
+	echo 100 > "$P0"
+	delta=$((test - base))
+	magnitude=$(absolute "$delta")
+	[ "$magnitude" -ge 120 ] || {
+		log "four-wire PWM0 calibration inconclusive: base=$base test=$test"
+		return 1
+	}
+	ACTIVE=pwm0
+	[ "$delta" -gt 0 ] && DIRECTION=direct || DIRECTION=inverse
+	log "four-wire calibrated active=pwm0 direction=$DIRECTION base=$base test=$test"
+	return 0
+}
+
+calibrate_selected() {
+	if [ "$FAN_TYPE" = 4wire ]; then
+		calibrate_fourwire
+	else
+		calibrate
+	fi
+}
+
+tachless_compatible() {
+	local chip base ngpio gpio exported=0 value
+	# Match the stock fanjudge.sh hardware-variant strap.  Its legacy GPIO469
+	# is MT6990 GPIO193: low selects the three-wire PWM5/20 kHz route, while
+	# high selects the four-wire PWM0/40 kHz route.
+	for chip in /sys/class/gpio/gpiochip*; do
+		[ "$(cat "$chip/label" 2>/dev/null)" = pinctrl_paris ] || continue
+		base=$(cat "$chip/base" 2>/dev/null)
+		ngpio=$(cat "$chip/ngpio" 2>/dev/null)
+		case "$base:$ngpio" in *[!0-9:]*|:*) continue;; esac
+		[ 193 -lt "$ngpio" ] || continue
+		gpio=$((base + 193))
+		if [ ! -d "/sys/class/gpio/gpio$gpio" ]; then
+			echo "$gpio" > /sys/class/gpio/export 2>/dev/null || continue
+			exported=1
+			sleep 1
+		fi
+		echo in > "/sys/class/gpio/gpio$gpio/direction" 2>/dev/null
+		value=$(cat "/sys/class/gpio/gpio$gpio/value" 2>/dev/null)
+		[ "$exported" -eq 1 ] && echo "$gpio" > /sys/class/gpio/unexport 2>/dev/null
+		case "$value" in
+			0) ACTIVE=pwm5;;
+			1) ACTIVE=pwm0;;
+			*) continue;;
+		esac
+		DIRECTION=direct
+		TACH_VALID=0
+		log "tachometer unavailable; stock GPIO193=$value selected $ACTIVE direct control"
+		return
+	done
+
+	# Preserve the known four-wire fail-safe if the variant strap itself is
+	# unavailable.  This keeps old boards cooling instead of guessing PWM5.
+	ACTIVE=pwm0
+	DIRECTION=direct
+	TACH_VALID=0
+	log "tachometer and GPIO193 unavailable; using four-wire PWM0 fail-safe"
+}
+
+set_active() {
+	if [ "$ACTIVE" = pwm0 ]; then
+		echo "$1" > "$P0"; echo 100 > "$P5"
+	elif [ "$ACTIVE" = pwm5 ]; then
+		echo 100 > "$P0"; echo "$1" > "$P5"
+	else
+		set_both "$1"
+	fi
+}
+
+safe_fallback() {
+	local reason="$1" temp speed count=0
+	set_both 100
+	while [ ! -e "$STOP" ]; do
+		temp=$(hottest); speed=$(rpm)
+		write_state "$reason" "$temp" "$speed"
+		[ -e "$RECALIBRATE" ] && { rm -f "$RECALIBRATE"; return 0; }
+		# Retry an inconclusive boot calibration after one minute, but a real
+		# stall requires an explicit request from LuCI before any more probing.
+		if [ "$reason" = fallback ]; then
+			count=$((count + 1))
+			[ "$count" -ge 6 ] && [ "$temp" -lt 80000 ] && return 0
+		fi
+		sleep 10
+	done
+	return 1
+}
+
+target_pwm() {
+	local temp="$1"
+	if [ "$DIRECTION" = direct ]; then
+		[ "$temp" -lt 60000 ] && { echo 110; return; }
+		[ "$temp" -lt 65000 ] && { echo 110; return; }
+		[ "$temp" -lt 70000 ] && { echo 170; return; }
+		[ "$temp" -lt 75000 ] && { echo 200; return; }
+		[ "$temp" -lt 80000 ] && { echo 220; return; }
+		[ "$temp" -lt 85000 ] && { echo 240; return; }
+		echo 255
+	else
+		[ "$temp" -lt 55000 ] && { echo 200; return; }
+		[ "$temp" -lt 60000 ] && { echo 170; return; }
+		[ "$temp" -lt 65000 ] && { echo 125; return; }
+		echo 100
+	fi
+}
+
+rm -f "$STOP"
+for attempt in 1 2 3 4 5 6; do
+	discover && break
+	sleep 5
+done
+
+if ! discover; then
+	log "PWM0/PWM5 fan interfaces unavailable"
+	exit 1
+fi
+
+FAN_TYPE=$(detect_fan_type)
+if [ "$FAN_TYPE" = 3wire ]; then
+	threewire_loop
+	exit 0
+fi
+
+[ "$FAN_TYPE" = 4wire ] && log "stock GPIO193 selected four-wire PWM0 tachometer control"
+
+trap 'set_both 100; exit 0' TERM INT
+
+if calibrate_selected; then
+	TACH_VALID=1
+else
+	tachless_compatible
+fi
+
+stall_count=0
+last_target=
+while [ ! -e "$STOP" ]; do
+	manual=$(cat "$MANUAL" 2>/dev/null)
+	case "$manual" in
+		115|180|220)
+			set_active "$manual"
+			write_state manual "$(hottest)" "$(rpm)"
+			# Wake within one second when LuCI clears the manual override.  A
+			# single five-second sleep made manual-to-auto feedback needlessly
+			# lag behind the button press and the two-second page poll.
+			for wait_step in 1 2 3 4 5; do
+				sleep 1
+				[ "$(cat "$MANUAL" 2>/dev/null)" = "$manual" ] || break
+			done
+			continue
+			;;
+		*) ;;
+	esac
+	if [ -e "$RECALIBRATE" ]; then
+		rm -f "$RECALIBRATE"
+		ACTIVE= DIRECTION=
+		if calibrate_selected; then
+			TACH_VALID=1
+		else
+			tachless_compatible
+		fi
+	fi
+	temp=$(hottest)
+	target=$(target_pwm "$temp")
+
+	# Keep the unused stock three-wire route at its harmless baseline value.
+	set_active "$target"
+
+	[ "$target" = "$last_target" ] || log "temperature=$temp target=$target active=$ACTIVE direction=$DIRECTION"
+	last_target="$target"
+	# Publish the selected automatic output immediately.  The later update
+	# replaces this preliminary RPM with the settled post-transition reading.
+	write_state automatic "$temp" "$(rpm)"
+	sleep 5
+	speed=$(rpm)
+	if [ "$TACH_VALID" -eq 1 ] && [ "$speed" -eq 0 ]; then
+		stall_count=$((stall_count + 1))
+	else
+		stall_count=0
+	fi
+
+	if [ "$stall_count" -ge 2 ]; then
+		set_both 100
+		write_state stalled "$temp" "$speed"
+		log "tachometer stalled; restored both routes to PWM100"
+		safe_fallback stalled || exit 0
+		ACTIVE= DIRECTION=
+		if calibrate_selected; then
+			TACH_VALID=1
+		else
+			tachless_compatible
+		fi
+		stall_count=0
+		continue
+	fi
+
+	write_state automatic "$temp" "$speed"
+done
+
+set_both 100
+exit 0

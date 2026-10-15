@@ -1,0 +1,32 @@
+ await open('view/system/lg6851f-led_v20261015_1.js',`
+window.fixtureLEDs=[['network','网络','自动跟随有线接口连接',['green']],['cell5g','5G','自动跟随 5G 驻网与信号',['green','blue','red']],['cell4g','4G','自动跟随 4G 驻网与信号',['green','blue','red']],['wifi','Wi-Fi','自动跟随无线接口状态',['green']],['power','电源','自动为常亮；熄灭仅关闭指示灯',['green']]].map(([key,label,hint,colors])=>({key,label,hint,colors,color:'green',mode:'auto',interval:500,available:true,active_colors:key==='wifi'||key==='cell5g'||key==='power'?['green']:[],lit:key==='wifi'||key==='cell5g'||key==='power',blinking:false}));
+handlers.get_status=()=>({supported:true,leds:fixtureLEDs});
+handlers.set_mode=(key,mode,interval,color)=>{fixtureLEDs.forEach(l=>{if(key==='all'||l.key===key){l.mode=mode;l.interval=interval;if(color)l.color=color;l.lit=mode==='on'||mode==='blink'||(mode==='auto'&&l.key==='power');l.active_colors=l.lit?[l.color]:[];l.blinking=mode==='blink';}});return {success:true,status:{supported:true,leds:fixtureLEDs}};};
+`);
+ check(await page.locator('.led-item').count()===5,'exactly five light rows');
+ check(await page.locator('.led-title').allTextContents().then(x=>x.join('|'))==='网络灯位 1|5G灯位 2|4G灯位 3|Wi-Fi灯位 4|电源灯位 5','rows match photograph from top to bottom');
+ check(await page.locator('.led-color').count()===2,'color controls belong only to RGB5G/4G');
+ check(await page.locator('.led-buttons [data-mode]').count()===20,'each physical light has four actions');
+ await page.locator('[data-led="cell5g"] [data-mode="on"]').click();
+ await page.locator('[data-led="cell5g"] .led-color').selectOption('blue');
+ check((await page.locator('[data-led="cell5g"] .led-live').textContent())==='蓝色常亮','group color change applies and shows true color');
+ check(await page.locator('[data-led="cell4g"] [data-mode="auto"]').getAttribute('aria-pressed')==='true','5G action leaves4G mode independent');
+ await page.locator('[data-led="cell5g"] [data-mode="blink"]').click();
+ await page.locator('[data-led="cell5g"] .led-speed').selectOption('250');
+ check(await page.locator('[data-led="cell5g"] .led-live').textContent()==='蓝色闪烁','blink actual state rendered');
+ check(await page.locator('[data-led="wifi"] .led-speed').inputValue()==='500','blink timing independent per aperture');
+ check(await page.evaluate(()=>{const c=calls.filter(c=>c.method==='set_mode').pop();return c.args.join('|')==='cell5g|blink|250|blue';}),'correct grouped action, interval and color RPC arguments');
+ await page.getByRole('button',{name:'全部熄灭',exact:true}).click();
+ check(await page.locator('[data-mode="off"].selected').count()===5,'all-off covers all five lights');
+ check(await page.locator('.led-live').allTextContents().then(x=>x.every(t=>t==='当前熄灭')),'all-off live status truthful');
+ await page.getByRole('button',{name:'恢复全部自动',exact:true}).click();
+ check(await page.locator('[data-mode="auto"].selected').count()===5,'all-auto restores all five lights');
+ check((await page.locator('[data-led="power"] .led-hint').textContent()).includes('仅关闭指示灯'),'power label clearly distinguishes lamp from powering off');
+ await page.evaluate(()=>{fixtureLEDs[4].available=false;fixtureLEDs[4].error='驱动接口未就绪';screenView.paint({supported:true,leds:fixtureLEDs});});
+ check(await page.locator('[data-led="power"] button:disabled').count()===4,'missing module disables actual power controls');
+ check(await page.locator('[data-led="power"] .led-live').textContent()==='驱动接口未就绪','missing interface not falsely shown off');
+ await page.evaluate(()=>{fixtureLEDs[4].available=true;screenView.paint({supported:true,leds:fixtureLEDs});});
+ await checkTheme('.lg-control','five-LED page');
+ await theme('light',true);await page.screenshot({path:path.join(root,'五灯控制-白天.png'),fullPage:true});await theme('dark',true);await page.screenshot({path:path.join(root,'五灯控制-黑夜.png'),fullPage:true});
+ for(const width of [390,320]){await page.setViewportSize({width,height:844});check(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1),'five-light controls no page overflow at '+width);}
+ await page.screenshot({path:path.join(root,'五灯控制-手机.png'),fullPage:true});

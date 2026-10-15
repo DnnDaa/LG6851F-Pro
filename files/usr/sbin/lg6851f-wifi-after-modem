@@ -1,0 +1,3 @@
+#!/bin/sh
+# Wi-Fi is brought up once by the original vendor driver service.
+exit 0

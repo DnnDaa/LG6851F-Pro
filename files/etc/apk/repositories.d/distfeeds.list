@@ -1,0 +1,12 @@
+# Upstream OpenWrt snapshot feeds are intentionally DISABLED on this device.
+#
+# This firmware uses a custom kernel (6.18.44) and toolchain, so the rolling
+# snapshot packages can pull a libc/kmod combination that does not match the
+# running kernel.  The device-specific signed feed and the local feed in
+# customfeeds.list are the supported sources.
+#
+# The upstream URLs are kept here for reference only:
+# https://downloads.openwrt.org/snapshots/targets/mediatek/mt6990/packages/packages.adb
+# https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a55_neon-vfpv4/base/packages.adb
+# https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a55_neon-vfpv4/luci/packages.adb
+# https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a55_neon-vfpv4/packages/packages.adb

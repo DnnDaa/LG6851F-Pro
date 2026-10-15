@@ -1,0 +1,158 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+
+lg6851f_refresh_firmware_owned_upper() {
+	local upper="$1" lower_dev="$2" lower=/tmp/lg6851f-lower item rel leaf lower_rel refreshed=0
+
+	[ -d "$upper" ] || return 0
+	# A new squashfs must win over copies and whiteouts left by an older
+	# firmware.  /etc/config, /etc/apk and the APK database are handled by
+	# the caller.  While this hook runs the overlay is NOT mounted yet, so
+	# "[ -e /path ]" would only see the initramfs - mount the freshly
+	# flashed rootfs read-only and compare against that instead.
+	mkdir -p "$lower"
+	if [ -n "$lower_dev" ] && mount -t squashfs -o ro "$lower_dev" "$lower" 2>/dev/null; then
+		:
+	else
+		lower=""
+	fi
+	: > /tmp/lg6851f-overlay-refresh.log
+	find "$upper" -depth -print 2>/dev/null | while IFS= read -r item; do
+		[ -d "$item" ] && continue
+		rel="${item#"$upper"/}"
+		# etc/uci-defaults is deliberately NOT refreshed: a consumed first-boot
+		# script must stay consumed (standard OpenWrt behaviour), otherwise every
+		# keep-settings upgrade re-runs the whole first-boot set and re-initialises
+		# network/modem/Wi-Fi in place (seen on 2026-10-13: 33% CPU, modem and
+		# swap temporarily unavailable).  New scripts from a new firmware still
+		# have no whiteout and therefore run normally.
+		case "$rel" in
+			etc/config/*|etc/apk/*|lib/apk/db/*|etc/uci-defaults/*) continue ;;
+		esac
+		leaf="${rel##*/}"
+		if [ "$leaf" = .wh..wh..opq ]; then
+			rm -f "$item"
+			continue
+		fi
+		case "$leaf" in
+			.wh.*) lower_rel="${rel%/*}/${leaf#.wh.}" ;;
+			*) lower_rel="$rel" ;;
+		esac
+		if [ -e "$lower/$lower_rel" ] || [ -L "$lower/$lower_rel" ]; then
+			rm -f "$item"
+			echo "$rel" >> /tmp/lg6851f-overlay-refresh.log
+		fi
+	done
+	# These files were deliberately deleted from the new lower image, so they
+	# have no lower counterpart for the general collision pass above.
+	rm -f "$upper/etc/init.d/lg6851f_p46_runtime_log" \
+		"$upper/usr/sbin/lg6851f-p46-runtime-log" \
+		"$upper/etc/rc.d/S20lg6851f_p46_runtime_log" \
+		"$upper/etc/rc.d/K88lg6851f_p46_runtime_log" \
+		"$upper/etc/uci-defaults/99-lg6851f-p46-runtime-log"
+	refreshed="$(wc -l < /tmp/lg6851f-overlay-refresh.log 2>/dev/null || echo 0)"
+	[ -n "$lower" ] && umount "$lower"
+	echo "LG6851F: refreshed firmware-owned overlay files for new rootfs ($refreshed entries)"
+}
+
+lg6851f_restore_sysupgrade() {
+	local mnt=/tmp/lg6851f-user-data
+	local saved="$mnt/openwrt-sysupgrade/sysupgrade.tgz"
+	local rootdev rootuuid stored_rootuuid source_mount mounted_here=0 reset_marker refresh_marker
+
+	[ -b /dev/mmcblk0p46 ] || return 0
+	[ "$(cat /sys/class/block/mmcblk0p46/partition 2>/dev/null)" = 46 ] || return 0
+	[ "$(cat /sys/class/block/mmcblk0p46/size 2>/dev/null)" = 5187456 ] || return 0
+	grep -qx 'PARTNAME=user_data' /sys/class/block/mmcblk0p46/uevent 2>/dev/null || return 0
+	source_mount="$(awk '$1 == "/dev/mmcblk0p46" && $3 == "ext4" && $4 ~ /(^|,)rw(,|$)/ { print $2; exit }' /proc/mounts)"
+	if [ -n "$source_mount" ]; then
+		mnt="$source_mount"
+		saved="$mnt/openwrt-sysupgrade/sysupgrade.tgz"
+	else
+		mkdir -p "$mnt"
+		mount -o rw,noatime /dev/mmcblk0p46 "$mnt" 2>/dev/null || return 0
+		mounted_here=1
+	fi
+	reset_marker="$mnt/.mt6990-factory-reset-pending"
+	refresh_marker="$mnt/openwrt-sysupgrade/refresh-firmware-overlay"
+	# LuCI's generic firstboot cannot erase an ext4 extroot.  The board wrapper
+	# records a reset request on verified user_data, then preinit performs the
+	# destructive part before mount_root can use the old upper directory.
+	# Preserve repair/runtime/crash and storage logs, but remove every active
+	# or archived OpenWrt configuration/software layer containing user state.
+	if [ -f "$reset_marker" ] &&
+	   [ -f "$mnt/.mt6990-extroot-managed" ] &&
+	   [ -d "$mnt/upper" ] && [ -d "$mnt/work" ]; then
+		rm -rf "$mnt/upper" "$mnt/work" "$mnt/etc" \
+			"$mnt/openwrt-extroot-backups" \
+			"$mnt/openwrt-sysupgrade/sysupgrade.tgz" \
+			"$mnt/openwrt-software/apps" \
+			"$mnt/openwrt-software/data" \
+			"$mnt/openwrt-software/cache"
+		mkdir -p "$mnt/upper" "$mnt/work" "$mnt/etc"
+		rootdev="$(sed -n 's/.*[[:space:]]root=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
+		rootuuid="$(block info "$rootdev" 2>/dev/null | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
+		if [ -n "$rootuuid" ]; then
+			echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
+			echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			rm -f "$reset_marker"
+			sync
+			echo "LG6851F: managed p46 factory reset completed"
+		else
+			echo "LG6851F: factory reset blocked: current rootfs UUID unavailable"
+		fi
+	fi
+	# Every signed sysupgrade has a new squashfs UUID. Refresh the extroot
+	# binding before mount_root evaluates it, otherwise a preserved p46
+	# software layer is correctly rejected and the system falls back to RAM.
+	if [ -d "$mnt/upper" ] && [ -d "$mnt/work" ]; then
+		rootdev="$(sed -n 's/.*[[:space:]]root=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
+		rootuuid="$(block info "$rootdev" 2>/dev/null | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
+		if [ -n "$rootuuid" ]; then
+			stored_rootuuid="$(cat "$mnt/.lg6851f-overlay-uuid" 2>/dev/null)"
+			[ -n "$stored_rootuuid" ] || stored_rootuuid="$(cat "$mnt/etc/.extroot-uuid" 2>/dev/null)"
+			if [ -f "$refresh_marker" ] ||
+			   { [ -n "$stored_rootuuid" ] && [ "$stored_rootuuid" != "$rootuuid" ]; }; then
+				lg6851f_refresh_firmware_owned_upper "$mnt/upper" "$rootdev"
+				# P46 is a persistent extroot and may contain program files from
+				# an older OpenClash package.  Those files mask the new squashfs
+				# versions after sysupgrade, so refresh package-owned code while
+				# retaining /etc/config/openclash and /etc/openclash.  Scheduling
+				# is firmware-owned: rcS must always call the init script, whose
+				# internal UCI switch decides whether OpenClash actually starts.
+				rm -f "$mnt/upper/etc/init.d/openclash" \
+				      "$mnt/upper/etc/uci-defaults/luci-openclash" \
+				      "$mnt/upper/etc/rc.d/S99openclash" \
+				      "$mnt/upper/etc/rc.d/.wh.S99openclash" \
+				      "$mnt/upper/usr/lib/lua/luci/openclash.lua" \
+				      "$mnt/upper/usr/lib/lua/luci/controller/openclash.lua" \
+				      "$mnt/upper/usr/lib/lua/luci/i18n/openclash.zh-cn.lmo"
+				rm -rf "$mnt/upper/usr/share/openclash" \
+				       "$mnt/upper/usr/lib/lua/luci/model/cbi/openclash" \
+				       "$mnt/upper/usr/lib/lua/luci/view/openclash" \
+				       "$mnt/upper/www/luci-static/resources/openclash"
+				# The flashed image's own APK database and world file must win;
+				# otherwise the new firmware's packages look missing to apk and
+				# dependency resolution (Nikki's kmods) fails outright.
+				rm -f "$mnt/upper/lib/apk/db/installed" \
+				      "$mnt/upper/lib/apk/db/scripts.tar.gz" \
+				      "$mnt/upper/lib/apk/db/triggers" \
+				      "$mnt/upper/etc/apk/world"
+				echo "LG6851F: refreshed OpenClash program files for new firmware"
+				rm -f "$refresh_marker"
+			fi
+			mkdir -p "$mnt/etc"
+			echo "$rootuuid" > "$mnt/.lg6851f-overlay-uuid"
+			echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
+			echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			echo "LG6851F: refreshed managed extroot binding for current rootfs"
+		fi
+	fi
+	if [ -s "$saved" ]; then
+		cp -f "$saved" /sysupgrade.tgz &&
+			echo "LG6851F: staged preserved configuration for restore"
+	fi
+	[ "$mounted_here" = 1 ] && umount "$mnt"
+}
+
+boot_hook_add preinit_mount_root lg6851f_restore_sysupgrade

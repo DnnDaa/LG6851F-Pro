@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+case "${1:-status}" in
+ status)
+  printf 'same_bssid: '; cat /sys/module/mt_wifi/parameters/intrabss_bridge
+  cat /proc/mt6990_lan_accel
+  ;;
+ on|off)
+  value=N; [ "$1" != on ] || value=Y
+  printf '%s' "$value" > /sys/module/mt_wifi/parameters/intrabss_bridge
+  printf '%s' "$value" > /sys/module/hwnat/parameters/cpu_wifi_accel
+  ;;
+ *) echo "Usage: lg6851f-lan-accel [status|on|off]" >&2; exit 2;;
+esac

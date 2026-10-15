@@ -1,0 +1,22 @@
+#!/bin/sh
+# CPU-to-PPE packets currently use eth0 TX queue 0. Preserve its mq root.
+[ "$(cat /sys/module/hwnat/parameters/cpu_wifi_accel 2>/dev/null)" = Y ] || exit 0
+[ -d /sys/class/net/eth0/queues/tx-0 ] || exit 0
+tc=$(command -v tc)
+[ -n "$tc" ] || tc=/usr/libexec/tc-full
+[ -x "$tc" ] || exit 1
+root=$($tc qdisc show dev eth0 2>/dev/null | awk '$1 == "qdisc" && $4 == "root" { print $2 ":" $3; exit }')
+case "$root" in
+ mq:*) major=${root#mq:}; major=${major%:};;
+ *) logger -t lg6851f-local-tcp-fq 'No mq root on eth0; leaving existing scheduler unchanged'; exit 0;;
+esac
+parent="$major:1"
+# tc omits a zero major in its formatted class id.
+already=$($tc qdisc show dev eth0 2>/dev/null | awk -v parent="$parent" '$1 == "qdisc" && $2 == "fq" { for (i=1;i<NF;i++) if ($i == "parent" && ($(i+1) == parent || (parent == "0:1" && $(i+1) == ":1"))) print "yes" }')
+[ "$already" != yes ] || exit 0
+if [ ! -d /sys/module/sch_fq ]; then
+ modprobe sch_fq 2>/dev/null || insmod "/lib/modules/$(uname -r)/sch_fq.ko" || exit 1
+fi
+# Keep fq's pacing enabled, with no fixed throughput cap. Other mq children,
+# eth1, Wi-Fi qdiscs and net.core.default_qdisc are left unchanged.
+"$tc" qdisc replace dev eth0 parent "$parent" handle 101: fq

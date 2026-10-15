@@ -1,0 +1,50 @@
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed.c b/drivers/net/ethernet/mediatek/mtk_wed.c
+--- a/drivers/net/ethernet/mediatek/mtk_wed.c
++++ b/drivers/net/ethernet/mediatek/mtk_wed.c
+@@ -2851,7 +2851,13 @@
+ 	hw->wdma = wdma;
+ 	hw->index = index;
+ 	hw->irq = irq;
+-	hw->version = eth->soc->version;
++	/* The MT6990 WED/WO block reuses the v2 (MT7986) register layout
++	 * but the ethernet driver reports .version = 1 for the SoC.
++	 * Select the v2 code paths explicitly so the WO/MCU offload can
++	 * come up instead of falling into the v1 pcie-mirror/hifsys path.
++	 */
++	hw->version = MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990) ?
++		      2 : eth->soc->version;
+ 
+ 	switch (hw->version) {
+ 	case 2:
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed_wo.h b/drivers/net/ethernet/mediatek/mtk_wed_wo.h
+--- a/drivers/net/ethernet/mediatek/mtk_wed_wo.h
++++ b/drivers/net/ethernet/mediatek/mtk_wed_wo.h
+@@ -93,6 +93,8 @@
+ #define MT7986_FIRMWARE_WO1	"mediatek/mt7986_wo_1.bin"
+ #define MT7988_FIRMWARE_WO0	"mediatek/mt7988/mt7988_wo_0.bin"
+ #define MT7988_FIRMWARE_WO1	"mediatek/mt7988/mt7988_wo_1.bin"
++#define MT6990_FIRMWARE_WO0	"mediatek/6990_wo_0.bin"
++#define MT6990_FIRMWARE_WO1	"mediatek/6990_wo_1.bin"
+ 
+ #define MTK_WO_MCU_CFG_LS_BASE				0
+ #define MTK_WO_MCU_CFG_LS_HW_VER_ADDR			(MTK_WO_MCU_CFG_LS_BASE + 0x000)
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed_mcu.c b/drivers/net/ethernet/mediatek/mtk_wed_mcu.c
+--- a/drivers/net/ethernet/mediatek/mtk_wed_mcu.c
++++ b/drivers/net/ethernet/mediatek/mtk_wed_mcu.c
+@@ -385,6 +385,10 @@
+ 		if (of_device_is_compatible(wo->hw->node,
+ 					    "mediatek,mt7981-wed"))
+ 			fw_name = MT7981_FIRMWARE_WO;
++		else if (of_device_is_compatible(wo->hw->node,
++						 "mediatek,mt6990-wed"))
++			fw_name = wo->hw->index ? MT6990_FIRMWARE_WO1
++						: MT6990_FIRMWARE_WO0;
+ 		else
+ 			fw_name = wo->hw->index ? MT7986_FIRMWARE_WO1
+ 						: MT7986_FIRMWARE_WO0;
+@@ -464,3 +468,5 @@
+ MODULE_FIRMWARE(MT7986_FIRMWARE_WO1);
+ MODULE_FIRMWARE(MT7988_FIRMWARE_WO0);
+ MODULE_FIRMWARE(MT7988_FIRMWARE_WO1);
++MODULE_FIRMWARE(MT6990_FIRMWARE_WO0);
++MODULE_FIRMWARE(MT6990_FIRMWARE_WO1);

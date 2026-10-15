@@ -1,0 +1,97 @@
+#!/bin/sh /etc/rc.common
+#
+# LG6851F: persistent 512 MiB swap on the user_data partition (p46).
+# Created on first boot if missing; enabled by
+# /etc/uci-defaults/99-lg6851f-performance.
+#
+# The creation is deliberately done in the background, after the vendor Wi-Fi
+# bring-up has finished: writing a 512 MiB file on eMMC blocks I/O for tens of
+# seconds, and the vendor 618 Wi-Fi start (START=95) is timing sensitive - on
+# 2026-10-13 a synchronous dd here made the first boot after a flash come up
+# without Wi-Fi.  The swap is therefore only created once the Wi-Fi start has
+# signalled success (or after a bounded wait), at the lowest priority.
+#
+# Both paths first wait for the user_data extroot to be mounted: earlier than
+# that, "$SWAPFILE" does not exist yet and a swapon/creation attempt would run
+# against the read-only (or RAM-backed) root instead, which is how the swap
+# "disappeared" on the 2026-10-13 post-flash boot.
+
+START=90
+STOP=05
+
+SWAPFILE=/overlay/swap/swapfile
+DIR=/overlay/swap
+
+user_data_mounted() {
+	grep -q ' /overlay ' /proc/mounts 2>/dev/null
+}
+
+start_worker() {
+	# 1) wait (bounded) for the persistent partition
+	n=0
+	while [ "$n" -lt 60 ]; do
+		user_data_mounted && break
+		sleep 1
+		n=$((n + 1))
+	done
+	user_data_mounted || logger -t swap "user_data not mounted yet; swap will retry"
+
+	if [ -e "$SWAPFILE" ]; then
+		# 2) enable with retries - the file may briefly be busy/unusable
+		n=0
+		while [ "$n" -lt 12 ]; do
+			grep -q "$SWAPFILE" /proc/swaps && break
+			swapon -p 10 "$SWAPFILE" 2>/dev/null && break
+			sleep 5
+			n=$((n + 1))
+		done
+		grep -q "$SWAPFILE" /proc/swaps || logger -t swap "could not enable $SWAPFILE"
+	else
+		{
+			# wait for the vendor Wi-Fi bring-up to finish first
+			waited=0
+			while [ "$waited" -lt 150 ]; do
+				[ -e /tmp/lg6851f-vendor618-keep ] && break
+				[ -e /tmp/lg6851f-vendor618-ready ] && break
+				sleep 5
+				waited=$((waited + 5))
+			done
+			sleep 5
+			# and for the persistent partition, so the file lands on p46
+			waited=0
+			while [ "$waited" -lt 120 ]; do
+				user_data_mounted && break
+				sleep 5
+				waited=$((waited + 5))
+			done
+			user_data_mounted || exit 1
+			mkdir -p "$DIR"
+			nice -n 19 dd if=/dev/zero of="$SWAPFILE" bs=1M count=512 2>/dev/null
+			chmod 600 "$SWAPFILE"
+			mkswap "$SWAPFILE" >/dev/null
+			swapon -p 10 "$SWAPFILE"
+			logger -t swap "created and enabled 512 MiB swap on $SWAPFILE"
+		}
+	fi
+	sysctl -q -w vm.swappiness=20 2>/dev/null
+	sysctl -q -w vm.vfs_cache_pressure=50 2>/dev/null
+}
+
+start() {
+ if user_data_mounted && [ -f "$SWAPFILE" ]; then
+  grep -q "$SWAPFILE" /proc/swaps && return 0
+  swapon -p 10 "$SWAPFILE" 2>/dev/null && return 0
+ fi
+ (
+  mkdir /tmp/lg6851f-swap-start.lock 2>/dev/null || exit 0
+  trap 'rmdir /tmp/lg6851f-swap-start.lock 2>/dev/null' EXIT
+  start_worker
+ ) </dev/null >/dev/null 2>&1 &
+ return 0
+}
+
+stop() {
+	swapoff "$SWAPFILE" 2>/dev/null
+}
+
+boot() { start; }

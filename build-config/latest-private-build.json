@@ -1,0 +1,98 @@
+{
+  "result": "OFFLINE_REAL_THEME_CONTRAST_RESPONSIVE_AND_REGRESSION_CHECKS_PASS; IMAGE_INTEGRITY_PASS; NOT_DEPLOYED",
+  "web_package": "LG6851F-A-原厂加速-五页面主题兼容-灯光布局优化-网页升级.tar.gz",
+  "web_sha256": "08c4cbc5560fa3b56da7a2890ca2f9cd8f2129c867a92ae59f7e8bdb2f5b9447",
+  "web_size": 68000668,
+  "mtk_package": "LG6851F-A-原厂加速-五页面主题兼容-灯光布局优化-MTK刷机包.zip",
+  "mtk_sha256": "a4507380c4b82535c97670cee8cd757a64eaf49ce745dffbbe4dc4adc6a0e5ae",
+  "mtk_size": 68387793,
+  "base_web_package": "LG6851F-A-原厂加速-五灯负载优化-看板信号修复-网页升级.tar.gz",
+  "base_web_sha256": "153ce482a1bfabc1d5a936f41ca2e5b728aa01f6993f7f0d4fb3c03cc3accb20",
+  "rootfs_a_sha256": "7a4094e879593afb9f78457c7035d212f5a2c92f76b634b1bd5460c598d773e8",
+  "squashfs_size_before_padding": 60915712,
+  "boot_a_sha256": "e0e6b93fb67d99e3a543383b57cbd5ca19dc38c02e013e3b1aab4aa6d0a51e3b",
+  "connsys_gnss_a_sha256": "633a1e2a19593d9cf12db4e140d893da9d1817c721381848831d90afc0b02463",
+  "changed_rootfs_files": [
+    "etc/uci-defaults/99-lg6851f-theme-compat-20261015",
+    "usr/share/luci/menu.d/luci-app-5gmodem.json",
+    "usr/share/luci/menu.d/luci-app-fiberhome.json",
+    "usr/share/luci/menu.d/luci-app-lg6851f-cpufreq.json",
+    "usr/share/luci/menu.d/luci-app-pwmfan.json",
+    "usr/share/luci/menu.d/luci-mod-system.json",
+    "www/luci-static/resources/fiberhome/common_v20261015_1.js",
+    "www/luci-static/resources/lg6851f/control_v20261015_1.css",
+    "www/luci-static/resources/lg6851f/theme_v20261015_1.js",
+    "www/luci-static/resources/view/fiberhome/home_v20261015_1.js",
+    "www/luci-static/resources/view/modem5g/status_cells_v20261015_1.js",
+    "www/luci-static/resources/view/pwmfan/control_v20261015_1.js",
+    "www/luci-static/resources/view/system/lg6851f-cpufreq-cards_v20261015_1.js",
+    "www/luci-static/resources/view/system/lg6851f-led_v20261015_1.js"
+  ],
+  "preserved_driver_hashes": {
+    "lib/modules/6.18.44/lg6851f_cpufreq_hw.ko": "8177eebcb1677cc82a7366af30781cd7ab329e4e2a4d878dc60a2a30957e3e5f",
+    "lib/modules/6.18.44/hwnat.ko": "3776844663fca378975f208d16df83b37f8723b6d2e4c827bc0c6959a30a1b04",
+    "usr/lib/lg6851f-vendor618/modules/mtk_warp.ko": "7450a331e7b2e5147ed9ca56d930825d521b854074f6a3fbf94df709bc222db1",
+    "lib/modules/6.18.44/lg6851f_panel_leds.ko": "239d70164d5ae3a709fc84094484f7685cc26f90c7027e4e38c6f1af8f5b307e"
+  },
+  "regression_checks": {
+    "offline_browser_cases": 49,
+    "theme_modes": [
+      "light",
+      "dark"
+    ],
+    "theme_tokens": [
+      "generic",
+      "Aurora"
+    ],
+    "render_errors": [],
+    "device_writes": false
+  },
+  "theme_checks": {
+    "offline_browser_cases": 240,
+    "real_theme_variants": 6,
+    "generic_theme_variants": 2,
+    "pages": [
+      "dashboard",
+      "cellular",
+      "CPU",
+      "fan",
+      "LED"
+    ],
+    "widths": [
+      240,
+      280,
+      320,
+      375,
+      600,
+      768,
+      1024,
+      1440,
+      1920
+    ],
+    "errors": [],
+    "device_writes": false
+  },
+  "tested_themes": [
+    "bundled Aurora light/dark",
+    "bundled Bootstrap light/dark",
+    "bundled Argon light/dark",
+    "generic tokenless light/dark"
+  ],
+  "mtk_enabled_partitions": [
+    "connsys_gnss_a",
+    "boot_a",
+    "rootfs_a"
+  ],
+  "device_writes": false,
+  "device_reboot": false,
+  "traffic_tests": false,
+  "changed_pages": [
+    "status dashboard",
+    "cellular status and cells",
+    "system CPU",
+    "system fan control",
+    "system LED control"
+  ],
+  "resources": "page-only JS/CSS; one shared event-driven palette adapter, no interval, no extra RPC/backend/AT queries or write loops",
+  "retained": "prior CCCI/WED idle-load fix, HNAT/WED datapaths, signed boot, CPUFreq,512MiB swap,Nikki,five-LED hardware mapping,signal-cache fix and saved cell locking"
+}

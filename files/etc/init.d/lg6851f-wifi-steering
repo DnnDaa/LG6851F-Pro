@@ -1,0 +1,6 @@
+#!/bin/sh /etc/rc.common
+START=99
+STOP=01
+start() {
+ /usr/sbin/lg6851f-wifi-steering || logger -t lg6851f-wifi-steering 'Could not apply one or more affinity settings'
+}

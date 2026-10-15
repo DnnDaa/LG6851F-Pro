@@ -1,0 +1,276 @@
+From: LG6851F MT6990 enablement
+Subject: [PATCH] net: mediatek: use MT6990 PCIe routing and vendor PPE ownership
+
+MT6990 uses WED v2 DMA but routes PCIe interrupts through VLPCFG and
+PERICFG_AO. Keep the vendor HNAT as the sole owner of both PPE engines.
+Start with TX only; the WED v3 hardware RRO rings do not exist here.
+
+--- a/drivers/net/ethernet/mediatek/mtk_wed.c
++++ b/drivers/net/ethernet/mediatek/mtk_wed.c
+@@ -20,6 +20,7 @@
+ #include "mtk_wed.h"
+ #include "mtk_ppe.h"
+ #include "mtk_wed_wo.h"
++#include <linux/soc/mediatek/mtk_hnat.h>
+ 
+ #define MTK_PCIE_BASE(n)		(0x1a143000 + (n) * 0x2000)
+ 
+@@ -80,6 +81,18 @@
+ 	},
+ 	.tx_ring_desc_size = sizeof(struct mtk_wdma_desc),
+ 	.wdma_desc_size = 2 * sizeof(struct mtk_wdma_desc),
++};
++
++/* MT6990 shares the v2 DMA layout, but has its own PCIe routing. */
++static const struct mtk_wed_soc_data mt6990_data = {
++ .regmap = {
++  .tx_bm_tkid = 0x0c8,
++  .wpdma_rx_ring = { 0x770 },
++  .reset_idx_tx_mask = GENMASK(1, 0),
++  .reset_idx_rx_mask = GENMASK(7, 6),
++ },
++ .tx_ring_desc_size = sizeof(struct mtk_wdma_desc),
++ .wdma_desc_size = 2 * sizeof(struct mtk_wdma_desc),
+ };
+ 
+ static const struct mtk_wed_soc_data mt7988_data = {
+@@ -506,7 +519,8 @@
+ 		if (!hw->wed_dev)
+ 			goto out;
+ 
+-		if (mtk_wed_is_v1(hw))
++		if (mtk_wed_is_v1(hw) ||
++		    MTK_HAS_CAPS(hw->eth->soc->caps, MTK_SOC_MT6990))
+ 			return NULL;
+ 
+ 		/* MT7986 WED devices do not have any pcie slot restrictions */
+@@ -1133,6 +1147,19 @@
+ 
+ 	mtk_wdma_rx_reset(dev);
+ 	mtk_wed_reset(dev, MTK_WED_RESET_WED);
++ if (hw->pcie_bus_configured) {
++  regmap_update_bits(hw->pcie_route, hw->pcie_route_reg,
++       hw->pcie_route_mask, hw->pcie_route_old);
++  if (hw->pcie_regs) {
++   writel(hw->pcie_msi_old[0], hw->pcie_regs + 0xc08);
++   writel(hw->pcie_msi_old[1], hw->pcie_regs + 0xc0c);
++  }
++  hw->pcie_bus_configured = false;
++ }
++ if (hw->pcie_regs) {
++  iounmap(hw->pcie_regs);
++  hw->pcie_regs = NULL;
++ }
+ 	mtk_wed_amsdu_free_buffer(dev);
+ 	mtk_wed_free_tx_buffer(dev);
+ 	mtk_wed_free_tx_rings(dev);
+@@ -1172,12 +1199,51 @@
+ 	mutex_unlock(&hw_lock);
+ }
+ 
++/* FG370 warp_mt6990: PCIe bridge interrupt mask lives in VLPCFG for
++ * domain 0 and PERICFG_AO for domains 1/2. There is no MT7986 WED-PCIE
++ * block at the old pcie-mirror address.
++ */
++static void mtk_wed_mt6990_bus_init(struct mtk_wed_device *dev)
++{
++ struct mtk_wed_hw *hw = dev->hw;
++ u32 ctrl = FIELD_PREP(MTK_WED_PCIE_INT_CTRL_POLL_EN, 2) |
++     MTK_WED_PCIE_INT_CTRL_MSK_EN_POLA |
++     FIELD_PREP(MTK_WED_PCIE_INT_CTRL_SRC_SEL, hw->index);
++
++ regmap_update_bits(hw->pcie_route, hw->pcie_route_reg,
++      hw->pcie_route_mask, hw->pcie_route_mask);
++ if (dev->wlan.msi) {
++  void __iomem *base = hw->pcie_regs;
++
++  /* Forward MSI bit 0 to WED's group, not the CPU's group. */
++  writel(readl(base + 0xc08) & ~BIT(0), base + 0xc08);
++  writel(readl(base + 0xc0c) | BIT(0), base + 0xc0c);
++  wed_w32(dev, MTK_WED_PCIE_CFG_INTM, hw->pcie_base + 0xc0c);
++  wed_w32(dev, MTK_WED_PCIE_CFG_BASE, hw->pcie_base + 0xc04);
++  wed_w32(dev, MTK_WED_PCIE_INT_TRIGGER, 0xff);
++  wed_set(dev, 0x550, 0xff);
++  /* MT6990 uses the legacy interrupt agent to carry MSI. */
++  ctrl |= BIT(25) | BIT(22);
++ } else {
++  wed_w32(dev, MTK_WED_PCIE_CFG_INTM, hw->pcie_base + 0x180);
++  wed_w32(dev, MTK_WED_PCIE_CFG_BASE, hw->pcie_base + 0x184);
++  wed_w32(dev, MTK_WED_PCIE_INT_TRIGGER, BIT(24));
++ }
++ wed_w32(dev, MTK_WED_PCIE_INT_CTRL, ctrl);
++ hw->pcie_bus_configured = true;
++}
++
+ static void
+ mtk_wed_bus_init(struct mtk_wed_device *dev)
+ {
+ 	switch (dev->wlan.bus_type) {
+ 	case MTK_WED_BUS_PCIE: {
+ 		struct device_node *np = dev->hw->eth->dev->of_node;
++
++		if (MTK_HAS_CAPS(dev->hw->eth->soc->caps, MTK_SOC_MT6990)) {
++   mtk_wed_mt6990_bus_init(dev);
++   break;
++  }
+ 
+ 		if (mtk_wed_is_v2(dev->hw)) {
+ 			struct regmap *regs;
+@@ -1982,6 +2048,9 @@
+ 	if (!skb)
+ 		return;
+ 
++ if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990))
++  return;
++
+ 	if (reason != MTK_PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+ 		return;
+ 
+@@ -2442,6 +2511,30 @@
+ 	dev->wdma_idx = hw->index;
+ 	dev->version = hw->version;
+ 	dev->hw->pcie_base = mtk_wed_get_pcie_base(dev);
++ if (MTK_HAS_CAPS(hw->eth->soc->caps, MTK_SOC_MT6990)) {
++  struct device *host = pci_find_host_bridge(dev->wlan.pci_dev->bus)->dev.parent;
++  struct resource res;
++
++  ret = of_address_to_resource(host->of_node, 0, &res);
++  if (ret || resource_size(&res) < 0xc10) {
++   ret = -EINVAL;
++   goto out;
++  }
++  hw->pcie_base = res.start;
++  ret = regmap_read(hw->pcie_route, hw->pcie_route_reg, &hw->pcie_route_old);
++  if (ret)
++   goto out;
++  if (dev->wlan.msi) {
++   hw->pcie_regs = ioremap(res.start, resource_size(&res));
++   if (!hw->pcie_regs) {
++    ret = -ENOMEM;
++    goto out;
++   }
++   hw->pcie_msi_old[0] = readl(hw->pcie_regs + 0xc08);
++   hw->pcie_msi_old[1] = readl(hw->pcie_regs + 0xc0c);
++  }
++  dev->wlan.vendor_hnat = true;
++ }
+ 
+ 	ret = dma_set_mask_and_coherent(hw->dev, DMA_BIT_MASK(32));
+ 	if (ret)
+@@ -2718,7 +2811,7 @@
+ 	struct mtk_eth *eth = hw->eth;
+ 	flow_setup_cb_t *cb;
+ 
+-	if (!eth->soc->offload_version)
++	if (!eth->soc->offload_version || !eth->soc->ppe_num)
+ 		return -EOPNOTSUPP;
+ 
+ 	if (f->binder_type != FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
+@@ -2851,16 +2944,28 @@
+ 	hw->wdma = wdma;
+ 	hw->index = index;
+ 	hw->irq = irq;
+-	/* The MT6990 WED/WO block reuses the v2 (MT7986) register layout
+-	 * but the ethernet driver reports .version = 1 for the SoC.
+-	 * Select the v2 code paths explicitly so the WO/MCU offload can
+-	 * come up instead of falling into the v1 pcie-mirror/hifsys path.
++	/* WED v2 DMA rings, with MT6990-specific bus setup below. Ethernet's
++	 * descriptor generation is independent of the WED generation.
+ 	 */
+ 	hw->version = MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990) ?
+ 		      2 : eth->soc->version;
+ 
+ 	switch (hw->version) {
+ 	case 2:
++  if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990)) {
++   u32 route[3];
++
++   hw->pcie_route = syscon_regmap_lookup_by_phandle(np, "mediatek,pcie-route");
++   if (IS_ERR(hw->pcie_route) ||
++       of_property_read_u32_array(np, "mediatek,pcie-route", route, 3)) {
++    kfree(hw);
++    goto unlock;
++   }
++   hw->pcie_route_reg = route[1];
++   hw->pcie_route_mask = route[2];
++   hw->soc = &mt6990_data;
++   break;
++  }
+ 		hw->soc = &mt7986_data;
+ 		break;
+ 	case 3:
+--- a/drivers/net/ethernet/mediatek/mtk_wed.h
++++ b/drivers/net/ethernet/mediatek/mtk_wed.h
+@@ -36,6 +36,13 @@
+ 	struct mtk_eth *eth;
+ 	struct regmap *regs;
+ 	struct regmap *hifsys;
++ struct regmap *pcie_route;
++ u32 pcie_route_reg;
++ u32 pcie_route_mask;
++ u32 pcie_route_old;
++ void __iomem *pcie_regs;
++ u32 pcie_msi_old[2];
++ bool pcie_bus_configured;
+ 	struct device *dev;
+ 	void __iomem *wdma;
+ 	phys_addr_t wdma_phy;
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -6437,11 +6437,12 @@
+ 	 * metadata below expresses those SDK layouts without enabling SRAM.
+ 	 */
+ 	.version = 1,
+-	/* MT6990 has two PPE engines: wired traffic is served by PPE0,
+-	 * integrated modem (MDMA) traffic by PPE1.
++	/* Register WED, but leave both PPE engines to mt6990-hwnat.
++	 * Its 32K tables, MT6990 FOE format and MDMA setup must not be
++	 * replaced by mainline PPE tables when Ethernet is opened.
+ 	 */
+ 	.offload_version = 2,
+-	.ppe_num = 2,
++	.ppe_num = 0,
+ 	.hash_offset = 0,
+ 	.has_accounting = false,
+ 	.num_tx_queues = 16,
+--- a/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
++++ b/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
+@@ -774,7 +774,7 @@
+ 	struct mtk_eth *eth = mac->hw;
+ 	static LIST_HEAD(block_cb_list);
+ 
+-	if (!eth->soc->offload_version)
++	if (!eth->soc->offload_version || !eth->soc->ppe_num)
+ 		return -EOPNOTSUPP;
+ 
+ 	return mtk_eth_setup_tc_block_register(dev, f,
+@@ -802,7 +802,7 @@
+ {
+ 	static LIST_HEAD(mdma_block_cb_list);
+ 
+-	if (!mtk_eth_get_mdma_owner())
++	if (!mtk_eth_get_mdma_owner() || !mtk_ppe_get_mdma())
+ 		return -EOPNOTSUPP;
+ 
+ 	switch (type) {
+--- a/include/linux/soc/mediatek/mtk_wed.h
++++ b/include/linux/soc/mediatek/mtk_wed.h
+@@ -155,6 +155,8 @@
+ 		bool hw_rro;
+ 		bool msi;
+ 		bool hif2;
++  /* MT6990 vendor PPE, initially with WED TX only. */
++  bool vendor_hnat;
+ 
+ 		u16 token_start;
+ 		unsigned int nbuf;
+@@ -252,6 +254,9 @@
+ static inline bool mtk_wed_get_rx_capa(struct mtk_wed_device *dev)
+ {
+ #ifdef CONFIG_NET_MEDIATEK_SOC_WED
++ if (dev->wlan.vendor_hnat)
++  return false;
++
+ 	if (dev->version == 3)
+ 		return dev->wlan.hw_rro;
+ 

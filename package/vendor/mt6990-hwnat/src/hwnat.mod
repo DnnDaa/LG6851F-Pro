@@ -1,0 +1,13 @@
+./hw_nat/ra_nat.o
+./hw_nat/hwnat_ioctl.o
+./hw_nat/hnat_dbg_proc.o
+./hw_nat/hnat_common.o
+./hw_nat/foe_fdb.o
+./hw_nat/util.o
+./hw_nat/mcast_tbl.o
+./hw_nat/hnat_monitor.o
+./hw_nat/hnat_power.o
+./hw_nat/hnat_fast.o
+./hw_nat/hnat_swdvfs.o
+./hw_nat/hnat_hwdvfs.o
+./hw_nat/mt76_hnat.o

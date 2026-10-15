@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# LG6851F eMMC stock firmware, owner's LAN only. No block-device writes.
+set -eu
+umask 077
+lan_ip='@DEVICE_IP@'
+client_net='@CLIENT_NETWORK@'
+root_hash='@PASSWORD_HASH@'
+[ "$(id -u)" = 0 ] || exit 1
+[ -b /dev/mmcblk0p26 ] && grep -qx 'PARTNAME=rootfs_a' /sys/class/block/mmcblk0p26/uevent || exit 1
+ip -4 addr show | grep -F "inet $lan_ip/" >/dev/null || exit 1
+for cmd in dropbear dropbearkey awk mount iptables; do command -v "$cmd" >/dev/null || exit 1; done
+state=/tmp/lg6851f-stock-ssh
+mkdir -p "$state"
+chmod 700 "$state"
+awk -F: -v OFS=: -v replacement="$root_hash" '$1=="root" {$2=replacement} {print}' /etc/shadow > "$state/shadow.new"
+grep -q '^root:' "$state/shadow.new" || exit 1
+chmod 600 "$state/shadow.new"
+if awk '$2=="/etc/shadow" {found=1} END {exit !found}' /proc/mounts; then umount /etc/shadow; fi
+mv "$state/shadow.new" "$state/shadow"
+mount --bind "$state/shadow" /etc/shadow
+keydir=/data/lg6851f-stock-ssh
+mkdir -p "$keydir"
+chmod 700 "$keydir"
+if [ ! -s "$keydir/host-rsa" ]; then dropbearkey -t rsa -f "$keydir/host-rsa" >/dev/null 2>&1; fi
+chmod 600 "$keydir/host-rsa"
+iptables -C INPUT -d "$lan_ip" -s "$client_net" -p tcp --dport 22 -j ACCEPT 2>/dev/null ||
+ iptables -I INPUT 1 -d "$lan_ip" -s "$client_net" -p tcp --dport 22 -j ACCEPT
+if ! pidof dropbear >/dev/null; then dropbear -p "$lan_ip:22" -r "$keydir/host-rsa" -j -k; fi
+logger -t lg6851f-stock-ssh 'Owner LAN SSH bootstrap completed'
+

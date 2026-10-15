@@ -1,0 +1,2 @@
+config preferences 'main'
+ option description 'Per-LED overrides; absent entries use automatic status'

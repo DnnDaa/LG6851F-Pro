@@ -1,0 +1,15 @@
+/etc/config/nikki
+/etc/init.d/nikki
+/etc/nikki/mixin.yaml
+/etc/nikki/nftables/geoip6_cn.nft
+/etc/nikki/nftables/geoip_cn.nft
+/etc/nikki/scripts/debug.sh
+/etc/nikki/scripts/firewall_include.sh
+/etc/nikki/scripts/include.sh
+/etc/nikki/ucode/hijack.ut
+/etc/nikki/ucode/include.uc
+/etc/nikki/ucode/mixin.uc
+/etc/uci-defaults/99_firewall_nikki
+/etc/uci-defaults/99_init_nikki
+/etc/uci-defaults/99_migrate_nikki
+/lib/upgrade/keep.d/nikki

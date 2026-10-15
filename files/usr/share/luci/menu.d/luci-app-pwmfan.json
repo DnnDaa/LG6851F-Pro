@@ -1,0 +1,30 @@
+{
+  "admin/system/fan-control": {
+    "title": "风扇控制",
+    "order": 65,
+    "action": {
+      "type": "view",
+      "path": "pwmfan/control_v20261015_1"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-pwmfan"
+      ]
+    }
+  },
+  "admin/pwmfan/control": {
+    "action": {
+      "type": "alias",
+      "path": [
+        "admin",
+        "system",
+        "fan-control"
+      ]
+    },
+    "depends": {
+      "acl": [
+        "luci-app-pwmfan"
+      ]
+    }
+  }
+}

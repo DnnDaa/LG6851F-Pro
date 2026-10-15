@@ -1,0 +1,6 @@
+#!/bin/sh
+case "$ACTION:$INTERFACE" in
+ add:ra0|add:rai0|add:eth0|add:eth1)
+  /usr/sbin/lg6851f-wifi-steering || logger -t lg6851f-wifi-steering 'Could not apply one or more affinity settings'
+ ;;
+esac

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Apply the requested trial frequency once; keep both radios' other settings.
+[ "$(uci -q get wireless.radio1.type)" = vendor618 ] || exit 0
+uci set wireless.radio1.channel=44 || exit 1
+uci set wireless.radio1.htmode=EHT160 || exit 1
+uci commit wireless || exit 1
+exit 0
