@@ -26,7 +26,7 @@ for file in "$cfg/firmware/"*; do
 done
 cp -a /tmp/lg6851f-vendor618/wireless/. "$fw/"
 echo "$fw" > /sys/module/firmware_class/parameters/path
-# Public release: load this unit calibration from its own read-only factory partition.
+# Public release: use this unit own read-only factory calibration.
 /usr/sbin/lg6851f-public-calibration
 stage cfg80211
 # Hardware forwarding bypasses conntrack TCP window updates. Otherwise fw4

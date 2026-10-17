@@ -1,0 +1,27 @@
+#!/usr/bin/env ucode
+// SPDX-License-Identifier: GPL-2.0-only
+'use strict';
+import {open,writefile,rename} from 'fs';
+import * as E from '../share/ucode/lg6851f/cellular-engine.uc';
+let mode=ARGV[0];
+if(mode=='sms-job')E.job_run(ARGV[1]);
+else if(mode=='traffic-flush') {
+ let result=E.traffic_tick(true);if(!result.ok){warn(result.error+'\n');exit(1);}
+}
+else if(mode=='traffic-loop') {
+ let singleton=open('/tmp/lg6851fcell-traffic-loop.lock','a',0600);
+ if(!singleton || !singleton.lock('xn'))exit(0);
+ let last_error='',last_log=0;
+ for(;;){
+  let result;try{result=E.traffic_tick(false);}catch(e){result={ok:0,error:''+e};}
+  let error=result.ok?'':result.error??'采集未完成';
+  if(error && (error!=last_error || time()-last_log>=300)){
+   warn('lg6851f-cellular-traffic: '+error+'\n');last_log=time();
+  }
+  if(!error && last_error)warn('lg6851f-cellular-traffic: collection recovered\n');
+  last_error=error;
+  writefile('/tmp/lg6851fcell-traffic-health.json.new',sprintf('%J',{ok:result.ok?1:0,error:error,updated:time()}));
+  rename('/tmp/lg6851fcell-traffic-health.json.new','/tmp/lg6851fcell-traffic-health.json');
+  sleep(20000);
+ }
+}

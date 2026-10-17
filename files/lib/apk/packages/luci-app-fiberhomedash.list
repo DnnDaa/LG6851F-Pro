@@ -1,0 +1,9 @@
+/etc/config/fiberhomedash
+/etc/init.d/fiberhomedash
+/usr/lib/lua/luci/i18n/fiberhome.zh-cn.lmo
+/usr/lib/lua/luci/i18n/fiberhomedash.zh-cn.lmo
+/usr/share/luci/menu.d/luci-app-fiberhome.json
+/usr/share/rpcd/acl.d/luci-app-fiberhome.json
+/usr/share/rpcd/ucode/fiberhomedash
+/www/luci-static/resources/fiberhome/common.js
+/www/luci-static/resources/view/fiberhome/home.js

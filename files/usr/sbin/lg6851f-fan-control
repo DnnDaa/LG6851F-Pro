@@ -72,39 +72,48 @@ absolute() {
 	[ "$1" -lt 0 ] && echo $((-1 * $1)) || echo "$1"
 }
 
-hottest() {
-	local zone f type value max=0
-	# Keep the control curve and LuCI gauge on the same source: the hottest
-	# cpu_little core.  Fall back to every valid sensor only if CPU zones are
-	# unavailable, so a thermal-driver regression cannot leave the fan idle.
-	for zone in /sys/class/thermal/thermal_zone*; do
-		[ -r "$zone/type" ] && [ -r "$zone/temp" ] || continue
-		type=; IFS= read -r type < "$zone/type" || continue
-		case "$type" in cpu_little[0-9]*) ;; *) continue;; esac
-		value=; IFS= read -r value < "$zone/temp" || continue
-		case "$value" in ''|*[!0-9]*) continue;; esac
-		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
-	done
-	[ "$max" -gt 0 ] && { echo "$max"; return; }
-
-	for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
-		[ -r "$f" ] || continue
-		value=; IFS= read -r value < "$f" || continue
-		case "$value" in ''|*[!0-9]*) continue;; esac
-		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
-	done
-	echo "$max"
+# Sensor topology is static on this board. Cache paths, never temperatures.
+# Keep the same 5-second protection loop and the same fallback sensor set.
+CPU_SENSOR_PATHS=
+ALL_SENSOR_PATHS=
+discover_temperature_paths() {
+ local zone type f
+ CPU_SENSOR_PATHS= ALL_SENSOR_PATHS=
+ for zone in /sys/class/thermal/thermal_zone*; do
+  [ -r "$zone/type" ] && [ -r "$zone/temp" ] || continue
+  type=; IFS= read -r type < "$zone/type"
+  case "$type" in cpu_little[0-9]*) CPU_SENSOR_PATHS="$CPU_SENSOR_PATHS $zone/temp";; esac
+ done
+ for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
+  [ ! -r "$f" ] || ALL_SENSOR_PATHS="$ALL_SENSOR_PATHS $f"
+ done
 }
-
+read_max_temperature() {
+ local f value max=0
+ for f in $1; do
+  [ -r "$f" ] || continue
+  value=; IFS= read -r value < "$f" || continue
+  case "$value" in ''|*[!0-9]*) continue;; esac
+  [ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max=$value
+ done
+ echo "$max"
+}
+hottest() {
+ local max
+ max=$(read_max_temperature "$CPU_SENSOR_PATHS")
+ [ "$max" -gt 0 ] && { echo "$max"; return; }
+ hottest_all
+}
 hottest_all() {
-	local f value max=0
-	for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
-		[ -r "$f" ] || continue
-		value=; IFS= read -r value < "$f" || continue
-		case "$value" in ''|*[!0-9]*) continue;; esac
-		[ "$value" -gt "$max" ] && [ "$value" -lt 200000 ] && max="$value"
-	done
-	echo "$max"
+ # Retry discovery on unavailable/invalid sensors; the caller keeps its
+ # existing failsafe full-speed action if no valid temperature is found.
+ local max
+ max=$(read_max_temperature "$ALL_SENSOR_PATHS")
+ if [ "$max" -le 0 ]; then
+  discover_temperature_paths
+  max=$(read_max_temperature "$ALL_SENSOR_PATHS")
+ fi
+ echo "$max"
 }
 
 detect_fan_type() {
@@ -215,7 +224,7 @@ threewire_loop() {
 
 write_state() {
 	local status="$1" temp="$2" speed="$3" p0 p5
-	p0=$(cat "$P0" 2>/dev/null); p5=$(cat "$P5" 2>/dev/null)
+	p0= p5=; [ ! -r "$P0" ] || IFS= read -r p0 < "$P0"; [ ! -r "$P5" ] || IFS= read -r p5 < "$P5"
 	{
 		echo "status=$status"
 		echo "fan_type=${FAN_TYPE:-unknown}"
@@ -391,6 +400,8 @@ for attempt in 1 2 3 4 5 6; do
 	discover && break
 	sleep 5
 done
+
+discover_temperature_paths
 
 if ! discover; then
 	log "PWM0/PWM5 fan interfaces unavailable"

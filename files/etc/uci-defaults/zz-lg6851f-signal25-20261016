@@ -1,0 +1,4 @@
+#!/bin/sh
+uci -q set fiberhomedash.main.at_interval='25'
+uci -q commit fiberhomedash
+exit 0

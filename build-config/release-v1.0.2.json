@@ -1,0 +1,11 @@
+{
+  "version": "v1.0.2",
+  "date": "2026-10-17",
+  "public": true,
+  "prerelease": true,
+  "linux": "6.18.44",
+  "full_clean_build_executed_for_release": false,
+  "factory_calibration": "read from target device own fh_data, never donor calibration",
+  "wifi_power": "per-rate min with board factory target, no positive boost",
+  "luci": "isolated CGI, Promise.resolve-compatible power widget"
+}

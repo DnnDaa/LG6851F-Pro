@@ -14,9 +14,8 @@ define Package/lg6851f-modem-chain-only
 endef
 
 define Package/lg6851f-modem-chain-only/description
- 5G modem chain userspace and early vendor-storage setup. WiFi 7 remains
- handled by OpenWrt mt76; startup only imports validated per-device MAC slots
- from the factory MT7990 EEPROM into the known-good SDK dual-band template.
+ 5G modem chain userspace and early vendor-storage setup. WiFi is handled by the stock vendor driver overlay. Public startup reads
+ this device own factory calibration without writing factory/NV partitions.
 endef
 
 define Build/Compile

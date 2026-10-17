@@ -142,9 +142,7 @@ while :; do
 	for led in $PANEL_LEDS;do case "$OVERRIDE_TEXT" in *"|$led=1|"*) ;;*)cell_auto=1;;esac;done
 	[ "$cell_auto" = 1 ] || { sleep "$poll_seconds";continue; }
 
-	NET_JSON="$(ubus call network.interface.modem5g status 2>/dev/null)"
-	UP="$(echo "$NET_JSON" | jsonfilter -e '@.up')"
-	WAN="$(echo "$NET_JSON" | jsonfilter -e '@.l3_device')"
+	UP= WAN= cached_up= cached_wan= cached_ipv4= cache_age=999
 
 	# A single collector owns all periodic MIPC queries. LED and LuCI consume
 	# the same atomic cache, preventing independent control-channel polling.
@@ -153,20 +151,34 @@ while :; do
 		while IFS='=' read -r key value; do
 			case "$key" in
 				SIM) cached_sim=$value;; RAT) cached_rat=$value;; RAT_RAW) cached_raw=$value;;
+				UP) cached_up=$value;; WAN) cached_wan=$value;; IPV4) cached_ipv4=$value;;
 				REGISTERED) cached_registered=$value;; UPDATED) cached_updated=$value;; RSRP) RSRP=$value;;
 			esac
 		done < "$MODEM_STATE"
 		case "$cached_updated" in ''|*[!0-9]*) cached_registered=; RSRP=;; *)
 			now=$(date +%s)
-			[ $((now-cached_updated)) -le 90 ] || { cached_registered=; RSRP=; }
+			cache_age=$((now-cached_updated))
+			[ "$cache_age" -ge 0 ] && [ "$cache_age" -le 90 ] || { cached_registered=; RSRP=; }
 		;; esac
 		case "$cached_rat" in 4G|5G) RAT="$cached_rat"; RAT_RAW="$cached_raw";; esac
 	fi
 
+ # Reuse the status daemon's network sample, not a second UBUS/IP poll.
+ # Short expiry and a synchronous fallback keep missing/stale caches safe.
+ if [ "$cache_age" -ge 0 ] && [ "$cache_age" -le 15 ]; then
+  UP=$cached_up WAN=$cached_wan
+  [ -n "$cached_ipv4" ] || UP=false
+ else
+  NET_JSON="$(ubus -S call network.interface.modem5g status 2>/dev/null)"
+  UP="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.up')"
+  WAN="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.l3_device')"
+  cached_ipv4=
+  [ -z "$WAN" ] || cached_ipv4="$(ip -4 -o addr show dev "$WAN" 2>/dev/null)"
+ fi
 	SIM="${cached_sim:-unknown}"
 
 	REGISTERED=NO
-	[ "$UP" = true ] && [ -n "$WAN" ] && ip -4 addr show dev "$WAN" 2>/dev/null | grep -q 'inet ' && REGISTERED=YES
+	[ "$UP" = true ] && [ -n "$WAN" ] && [ -n "$cached_ipv4" ] && REGISTERED=YES
 	[ "$cached_registered" = YES ] && REGISTERED=YES
 	if [ "$REGISTERED" = YES ]; then update_signal_quality; else QUALITY=RED; PING_LOSS=100; PING_AVG_MS=9999; fi
 

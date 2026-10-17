@@ -1,0 +1,6 @@
+config traffic 'main'
+	option cycle_day '1'
+	option cap_bytes '0'
+	option warn_percent '90'
+	option cut_enabled '0'
+	option enabled '1'

@@ -1,0 +1,6 @@
+#!/bin/sh
+case "$1" in
+	list) echo '{"status":{}}';;
+	call) case "$2" in status) exec /usr/sbin/lg6851f-cpu-profile status;; *) exit 1;; esac;;
+	*) exit 1;;
+esac

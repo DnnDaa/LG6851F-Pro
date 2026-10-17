@@ -1,0 +1,15 @@
+#!/usr/bin/env ucode
+// SPDX-License-Identifier: GPL-2.0-only
+'use strict';
+import * as E from '../../ucode/lg6851f/cellular-engine.uc';
+function safe(fn) {try{return fn();}catch(e){return {ok:0,error:''+e};}}
+return {'luci.lg6851fcell':{
+ traffic_get:{call:function(){return safe(()=>E.traffic_get());}},
+ traffic_set:{args:{op:'',value:''},call:function(req){return safe(()=>E.traffic_set(req.args.op,req.args.value));}},
+ sms_get:{args:{revision:''},call:function(req){return safe(()=>E.sms_get(req.args.revision));}},
+ sms_sync:{args:{storage:'AUTO',force:false},call:function(req){return safe(()=>E.queue('sync',req.args));}},
+ sms_send:{args:{number:'',text:''},call:function(req){return safe(()=>E.queue('send',req.args));}},
+ sms_delete:{args:{id:''},call:function(req){return safe(()=>E.sms_delete(req.args.id,false));}},
+ sms_clear:{call:function(){return safe(()=>E.sms_delete('',true));}},
+ job_get:{args:{id:''},call:function(req){return safe(()=>E.job_get(req.args.id));}}
+}};

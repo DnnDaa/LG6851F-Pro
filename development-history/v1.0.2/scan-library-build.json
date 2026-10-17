@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "library": "usr/lib/libiwinfo.so.20230701",
+  "sha256": "b8e2c9498ec96982e82e67092231384bc1820e879455c2899849fcf3a0ba1db7",
+  "size": 68360,
+  "abi_symbols_unchanged": true,
+  "kernel_and_wifi_drivers_changed": false,
+  "build": "/root/build/lg6851f-wifi-scan-20261016/libiwinfo"
+}

@@ -1,0 +1,13 @@
+#!/bin/sh
+# On-demand, read-only report. No sampler, file output, timer, or cache purge.
+printf '\n=== Memory / swap ===\n'
+uptime
+grep -E '^(MemTotal|MemAvailable|Cached|Slab|SReclaimable|SUnreclaim|SwapTotal|SwapFree|Dirty|Writeback):' /proc/meminfo
+printf '\n=== Conntrack count / ceiling / buckets ===\n'
+for f in /proc/sys/net/netfilter/nf_conntrack_count /proc/sys/net/netfilter/nf_conntrack_max /sys/module/nf_conntrack/parameters/hashsize; do
+ printf '%s: ' "$f"; cat "$f" 2>/dev/null
+done
+printf '\n=== Top slab caches: reserved KiB, name, active/total objects ===\n'
+awk 'NR>2 && $2 ~ /^[0-9]+$/ {for(i=7;i<=NF;i++) if($i=="slabdata") printf "%10d %-28s %d/%d\n", $(i+2)*$6*4,$1,$2,$3}' /proc/slabinfo | sort -nr | head -n 12
+printf '\n=== Processes ===\n'
+ps w

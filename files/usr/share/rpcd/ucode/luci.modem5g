@@ -69,6 +69,10 @@ function cli(option, arg) {
 	};
 }
 
+function data_action(name) {
+ if(length(readfile('/tmp/lg6851f-modem-control.active')||''))return {code:75,error:'正在应用模组锁定设置，请稍后控制拨号'};
+ return capture(['/sbin/'+name,'modem5g'],20);
+}
 function valid_at(command) {
 	return type(command) == 'string' && length(command) >= 2 && length(command) <= 512 &&
 		match(command, /^AT[+A-Z0-9?=,._*#;:\" ()\/-]*$/i);
@@ -276,9 +280,9 @@ const methods = {
 	run_at: { args: { command: '' }, call: function(req) { return at(req.args?.command || ''); } },
 	get_network: { call: function() {
 		let state = capture([ '/bin/ubus', 'call', 'network.interface.modem5g', 'status' ], 5);
-		let config = capture([ '/sbin/uci', '-q', 'show', 'network.modem5g' ], 5);
-		let cached = cached_modem_state();
-		return { status: state.output, config: config.output, radio: cached.RADIO || '', rat: cached.RAT_RAW || cached.RAT || 'UNKNOWN', cached: true };
+        let cached = cached_modem_state(),u=cursor(),values={};
+        for(let key in ['apn','iptype','auth','mtu','peerdns','defaultroute'])values[key]=u.get('network','modem5g',key);
+        return {code:state.code,error:state.code?'netifd status unavailable':null,status:state.output,settings:values,radio:cached.RADIO||'',rat:cached.RAT_RAW||cached.RAT||'UNKNOWN',control_active:length(readfile('/tmp/lg6851f-modem-control.active')||'')>0,cached:true};
 	} },
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))
@@ -326,8 +330,8 @@ const methods = {
 		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };
 		return cli('nw_set_rat', mode);
 	} },
-	ifup: { call: function() { return capture([ '/sbin/ifup', 'modem5g' ], 20); } },
-	ifdown: { call: function() { return capture([ '/sbin/ifdown', 'modem5g' ], 20); } }
+	ifup: { call: function() { return data_action('ifup'); } },
+	ifdown: { call: function() { return data_action('ifdown'); } }
 };
 
 return { 'luci.modem5g': methods };

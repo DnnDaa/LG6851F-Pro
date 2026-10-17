@@ -1,0 +1,11 @@
+/etc/init.d/lg6851f-fan-control
+/usr/sbin/lg6851f-fan-control
+/usr/share/luci/menu.d/luci-app-pwmfan.json
+/usr/share/rpcd/acl.d/luci-app-pwmfan.json
+/usr/share/rpcd/ucode/luci.pwmfan
+/www/luci-static/resources/view/pwmfan/control.js
+/www/luci-static/resources/view/pwmfan/control_v4.js
+/www/luci-static/resources/view/pwmfan/panel_v2.js
+/www/luci-static/resources/view/pwmfan/panel_v3.js
+/www/luci-static/resources/view/pwmfan/panel_v5.js
+/www/luci-static/resources/view/pwmfan/panel_v6.js

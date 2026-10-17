@@ -1,0 +1,6 @@
+{
+  "luci-mod-network-config": {
+    "description": "Read LG6851F vendor firmware transmit power targets",
+    "read": { "ubus": { "lg6851f.wifi_power": [ "status" ] } }
+  }
+}

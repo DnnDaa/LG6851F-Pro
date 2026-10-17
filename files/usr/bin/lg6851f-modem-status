@@ -1,6 +1,7 @@
 #!/bin/sh
 
 . /lib/functions.sh
+. /usr/share/libubox/jshn.sh
 
 TAG=lg6851f-modem-status
 STATE=/tmp/lg6851f-modem-status.state
@@ -42,9 +43,38 @@ at_query() {
 	timeout 10 "$ATCLI" "$command" 2>/dev/null
 }
 
+reuse_shared_signal() {
+ local text stamp ok registered value age current
+ [ -r /tmp/fiberhomedash.fast.json ] || return 1
+ text="$(cat /tmp/fiberhomedash.fast.json 2>/dev/null)"
+ json_load "$text" 2>/dev/null || return 1
+ json_get_var stamp signal_ts
+ json_get_var ok signal_ok
+ json_get_var registered reg
+ case "$stamp" in ''|*[!0-9]*)return 1;;esac
+ case "$registered" in 1|5|10) ;;*)return 1;;esac
+ [ "$ok" = 1 ] || return 1
+ # MIPC reads may have waited through their close cooldown: validate the
+ # current clock, not the loop-start timestamp before those blocking reads.
+ current="$(date +%s)";case "$current" in ''|*[!0-9]*)return 1;;esac
+ age=$((current-stamp));[ "$age" -ge 0 ] && [ "$age" -le 10 ] || return 1
+ json_select sig 2>/dev/null || return 1
+ json_get_var value rsrp
+ case "$value" in ''|*[!0-9.-]*)return 1;;esac
+ RSRP=${value%.*}
+ SIGNAL_TS=$stamp
+ json_get_var RSRQ rsrq
+ json_get_var SINR sinr
+ SIGNAL="CESQ RSRP=$RSRP RSRQ=$RSRQ SINR=$SINR"
+ return 0
+}
+
 write_state() {
 	{
 		printf 'UPDATED=%s\n' "$now"
+        printf 'SIGNAL_TS=%s\n' "$SIGNAL_TS"
+        printf 'REGISTRATION_TS=%s\n' "$REGISTRATION_TS"
+        printf 'RADIO_TS=%s\n' "$RADIO_TS"
 		printf 'UP=%s\n' "$UP"
 		printf 'UPTIME=%s\n' "$UPTIME"
 		printf 'WAN=%s\n' "$WAN"
@@ -71,6 +101,7 @@ write_state() {
 trap 'rm -f "$STATE_NEW"; exit 0' TERM INT EXIT
 sleep "$start_delay"
 
+SIGNAL_TS= REGISTRATION_TS= RADIO_TS=
 last_registration=0
 last_radio=0
 last_identity=0
@@ -94,12 +125,19 @@ SINR=
 
 while :; do
 	now="$(date +%s)"
-	NET_JSON="$(ubus call network.interface.modem5g status 2>/dev/null)"
-	UP="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.up')"
-	UPTIME="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.uptime')"
-	WAN="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.l3_device')"
-	IPV4=
-	[ -n "$WAN" ] && IPV4="$(ip -4 -o addr show dev "$WAN" 2>/dev/null | sed -n 's/.* inet \([^ ]*\).*/\1/p' | head -n 1)"
+	NET_JSON="$(ubus -S call network.interface.modem5g status 2>/dev/null)"
+ UP= UPTIME= WAN= IPV4=
+ if json_load "$NET_JSON" 2>/dev/null;then
+  json_get_var UP up
+  case "$UP" in 1|true)UP=true;;*)UP=false;;esac
+  json_get_var UPTIME uptime
+  json_get_var WAN l3_device
+  if json_select 'ipv4-address' 2>/dev/null && json_select 1 2>/dev/null;then
+   json_get_var IPV4 address
+   json_get_var prefix mask
+   [ -z "$IPV4" ] || IPV4="$IPV4/${prefix:-32}"
+  fi
+ fi
 
 	if [ "$UP" = true ] && [ -n "$IPV4" ]; then
 		REGISTERED=YES
@@ -107,12 +145,18 @@ while :; do
 		REGISTERED=NO
 	fi
 
+ if [ -e /tmp/lg6851f-modem-control.active ];then
+  write_state
+  sleep "$poll_seconds"
+  continue
+ fi
 	if [ $((now - last_registration)) -ge "$registration_interval" ]; then
 		value="$(query show_sim_status)"
 		[ -n "$value" ] && SIM="$(clean_value "$value")"
 		value="$(query show_register_status)"
 		if [ -n "$value" ]; then
 			REGISTRATION="$(clean_value "$value")"
+            REGISTRATION_TS="$(date +%s)"
 			case "$REGISTRATION" in
 				*NOT*REGISTERED*|*Not*registered*|*not*registered*) REGISTERED=NO ;;
 				*REGISTERED*|*Registered*|*registered*) REGISTERED=YES ;;
@@ -127,15 +171,11 @@ while :; do
 			RAT_RAW="$(clean_value "$value")"
 			case "$RAT_RAW" in *5G*) RAT=5G ;; *4G*|*LTE*) RAT=4G ;; *) RAT=OTHER ;; esac
 		fi
-		# The vendor implementation of nw_get_signal has a duplicate response
-		# free. Keep it isolated in its short-lived CLI process and rate-limit it.
-		value="$(query nw_get_signal)"
-		if [ -n "$value" ]; then
-			SIGNAL="$(clean_value "$value")"
-			RSRP="$(printf '%s' "$SIGNAL" | sed -n 's/.*RSRP=\(-\{0,1\}[0-9][0-9]*\).*/\1/p')"
-		fi
+  # Avoid the vendor getter's known duplicate free and its extra MIPC wakeup.
+  # CESQ uses the existing bounded atcid transport and is decoded below.
+  last_detail=0
 		value="$(query nw_radio_state_get)"
-		[ -n "$value" ] && RADIO="$(clean_value "$value")"
+		[ -n "$value" ] && { RADIO="$(clean_value "$value")"; RADIO_TS="$(date +%s)"; }
 		last_radio="$now"
 	fi
 
@@ -155,6 +195,9 @@ while :; do
 	fi
 
 	if [ $((now - last_detail)) -ge "$detail_interval" ]; then
+  if reuse_shared_signal;then
+   last_detail="$now"
+  else
 		value="$(at_query 'AT+CESQ')"
 		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CESQ:[[:space:]]*//p' | head -n 1)"
 		if [ -n "$parsed" ]; then
@@ -167,9 +210,11 @@ while :; do
 			RSRQ="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $7 >= 0 && $7 <= 127) printf "%.1f", ($7 / 2) - 43; else if (NF == 6 && $5 >= 0 && $5 <= 34) printf "%.1f", ($5 / 2) - 19.5 }')"
 			cesq_rsrp="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $8 >= 0 && $8 <= 127) printf "%d", $8 - 156; else if (NF == 6 && $6 >= 0 && $6 <= 97) printf "%d", $6 - 140 }')"
 			SINR="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $9 >= 0 && $9 <= 127) printf "%.1f", ($9 / 2) - 23 }')"
-			[ -n "$cesq_rsrp" ] && RSRP="$cesq_rsrp"
+			[ -n "$cesq_rsrp" ] && { RSRP="$cesq_rsrp"; SIGNAL_TS="$(date +%s)"; }
+			SIGNAL="CESQ RSRP=$RSRP RSRQ=$RSRQ SINR=$SINR"
 		fi
 		last_detail="$now"
+  fi
 	fi
 
 	write_state

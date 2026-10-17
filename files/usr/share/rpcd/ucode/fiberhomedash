@@ -21,6 +21,8 @@ const ATCLI = '/usr/bin/modem5g-at';
 const STATE = '/tmp/lg6851f-modem-status.state';
 const CACHE = '/tmp/fiberhomedash.cache.json';
 const CACHE_NEW = '/tmp/fiberhomedash.cache.json.new';
+const SIGNAL_MAX_AGE = 45;
+const AT_GUARD = '/tmp/fiberhomedash.at-guard.lock';
 const FAST_CACHE = '/tmp/fiberhomedash.fast.json';
 const LOCK = '/tmp/fiberhomedash.collect.lock';
 const LOCK_FAST = '/tmp/fiberhomedash.collect-fast.lock';
@@ -28,6 +30,8 @@ const LIVE = '/tmp/fiberhomedash.live.json';
 const LIVE_NEW = '/tmp/fiberhomedash.live.json.new';
 const WATCH = '/tmp/fiberhomedash.watch';
 const RADIO_WATCH='/tmp/fiberhomedash.radio-watch';
+const SYSTEM_CACHE='/tmp/fiberhomedash.system.json';
+const CPU_CACHE='/tmp/fiberhomedash.cpu.json';
 const SAMPLER = '/tmp/fiberhomedash.sampler';
 const LEASES = '/tmp/dhcp.leases';
 
@@ -47,9 +51,9 @@ const DEFAULTS = {
 	info_interval: 10,	/* CPU / temperatures / memory / storage / Wi-Fi ... */
 	mobile_max: 15,		/* refresh the modem counters at least this often */
 	traffic_threshold: 32768,	/* LAN bytes per interval that count as "busy" */
-	at_interval: 5,		/* fast AT tier: DL/UL MCS */
+	at_interval: 25,		/* fast AT tier: DL/UL MCS */
 	at_slow_interval: 60,	/* slow AT tier: cells, carriers, bandwidth, AMBR, QCI */
-	watch_timeout: 180,	/* idle out when no page has polled for this long */
+	watch_timeout: 45,	/* idle out when no page has polled for this long */
 	idle_sleep: 5
 };
 
@@ -147,6 +151,11 @@ function config() {
 			else { let n = num(v); if (n != null && n >= 0) cfg[k] = n; }
 		}
 	} catch (e) { }
+	/* Migrate the old 20 s cadence even with a configuration-preserving upgrade.
+	 * Its old 15 s validity window caused periodic blanks on a healthy modem. */
+	cfg.at_interval = min(60, max(25, cfg.at_interval));
+	cfg.watch_timeout = min(60, max(30, cfg.watch_timeout));
+	cfg.info_interval = max(5, cfg.info_interval);
 	return cfg;
 }
 
@@ -323,7 +332,10 @@ function collect_running(lockfile) {
 	if (!length(raw)) return false;
 	let f = split(raw, ' ');
 	let pid = intval(f[0]);
-	if (pid != null && pid > 1 && access(sprintf('/proc/%d', pid))) return true;
+	if (pid != null && pid > 1 && access(sprintf('/proc/%d', pid))) {
+		let cmd = readstr(sprintf('/proc/%d/cmdline', pid));
+		if (cmd != null && index(cmd, SELF) >= 0 && index(cmd, 'collect') >= 0) return true;
+	}
 	/* the spawning side writes "0 <now>" until the child publishes its pid */
 	let stamp = intval(length(f) > 1 ? f[1] : f[0]);
 	if (stamp != null && (time() - stamp) < 15) return true;
@@ -405,27 +417,91 @@ function dynamic_qos(text, cid, kind) {
  return null;
 }
 function fast_radio() {
- let text = atrun('AT+CESQ');
- let stamp = time();
+ let text = atrun('AT+CESQ'), signal_ts = time();
  let sig = parse_cesq(text);
  let nr = index(readkv(STATE).RAT ?? '', '5G') >= 0;
  let regtext = atrun(nr ? 'AT+C5GREG?' : 'AT+CEREG?');
  let line = atfind(regtext, nr ? '+C5GREG:' : '+CEREG:');
- let reg = line ? intval(csvsplit(line)[1]) : null;
- let key = nr ? 'nr5g' : 'lte';
- let tp = qnwcfg(atrun(sprintf('AT+QNWCFG="%s_throughput_info"', key)));
- return { ts: stamp, ok: sig != null || line != null ? 1 : 0,
-          signal_ok: sig != null && sig.rsrp != null ? 1 : 0, reg: reg, sig: sig,
-          tput: tp ? { dl_mcs: intval(tp[0]), ul_mcs: intval(tp[1]) } : null };
+ let reg = line ? intval(csvsplit(line)[1]) : null, reg_ts = time();
+ return { ts: time(), response_ts: sig != null || line != null ? reg_ts : null,
+          signal_ts: sig?.rsrp != null ? signal_ts : null, reg_ts: reg != null ? reg_ts : null,
+          ok: sig != null || line != null ? 1 : 0,
+          signal_ok: sig?.rsrp != null ? 1 : 0, reg: reg, sig: sig,
+          retained: 0, tput: null };
 }
 
-function collect(fast) {
+function remember_radio(sample) {
+ let previous = loadjson(FAST_CACHE), now = time();
+ let registered = sample.reg == 1 || sample.reg == 5 || sample.reg == 10;
+ let denied = sample.reg != null && !registered;
+ let state = readkv(STATE), state_ts = intval(state.UPDATED);
+ let explicit_off = !registered && state_ts != null && now - state_ts >= 0 && now - state_ts <= 15 &&
+                    index(state.RADIO ?? '', 'RADIO_STATE_OFF') >= 0;
+ if (!sample.signal_ok && !denied && !explicit_off && previous?.signal_ok &&
+     now - (previous.signal_ts ?? previous.ts) >= 0 && now - (previous.signal_ts ?? previous.ts) <= SIGNAL_MAX_AGE) {
+  sample.sig = previous.sig; sample.signal_ts = previous.signal_ts ?? previous.ts;
+  sample.signal_ok = 1; sample.retained = 1;
+ }
+ if (sample.reg == null && !explicit_off && previous?.reg != null &&
+     now - (previous.reg_ts ?? previous.ts) >= 0 && now - (previous.reg_ts ?? previous.ts) <= SIGNAL_MAX_AGE) {
+  sample.reg = previous.reg; sample.reg_ts = previous.reg_ts ?? previous.ts;
+ }
+ if (sample.response_ts == null && previous) sample.response_ts = previous.response_ts ?? previous.ts;
+ if (sample.tput == null && sample.retained && previous) sample.tput = previous.tput;
+ if (explicit_off) { sample.signal_ok = 0; sample.sig = null; sample.reg = 0; sample.reg_ts = now; }
+ storejson(FAST_CACHE, FAST_CACHE + '.new', sample);
+ return sample;
+}
+
+/* Essential CESQ/registration is published before optional MCS or slow metadata.
+ * The AT channel remains serialized; no extra resident worker or parallel port. */
+function collect_throughput(sample) {
+ let nr=index(readkv(STATE).RAT??'', '5G')>=0;
+ let tp=qnwcfg(atrun(sprintf('AT+QNWCFG="%s_throughput_info"',nr?'nr5g':'lte')));
+ sample.tput=tp?{dl_mcs:intval(tp[0]),ul_mcs:intval(tp[1])}:sample.tput;
+ storejson(FAST_CACHE,FAST_CACHE+'.new',sample);
+ return sample;
+}
+function refresh_radio_due(sample) {
+ let stamp=sample?.signal_ts;
+ if(stamp==null || time()-stamp<25)return sample;
+ let watch=max(num(readstr(WATCH))??0,num(readstr(RADIO_WATCH))??0),now=monotonic();
+ if(now<watch || now-watch>15)return sample;
+ let update=fast_radio();update.tput=sample.tput;
+ return remember_radio(update);
+}
+
+/* A full round also updates the fast snapshot. Give it priority when both
+ * tiers are due, rather than continually starting fast rounds ahead of it. */
+function kick_radio() {
+ if (collect_running(LOCK) || collect_running(LOCK_FAST)) return;
+ let cfg = config(), slow = loadcache(), stamp = intval(slow?.slow_ts);
+ let missing_cells = !length(slow?.ecell ?? []);
+ let retry = intval(slow?.ecell_attempt_ts) ?? 0;
+ if (missing_cells) {
+  if (time() - retry >= 10) kick_collect(true, 'full');
+  else kick_collect(false, 'fast');
+ }
+ else if (stamp == null || time() - stamp >= cfg.at_slow_interval) kick_collect(false, 'full');
+ else kick_collect(false, 'fast');
+}
+
+
+function kick_slow_metadata() {
+ if(collect_running(LOCK)||collect_running(LOCK_FAST))return;
+ let cache=loadcache(),now=time(),cfg=config(),missing=!length(cache?.ecell??[]);
+ if(missing){if(now-(cache?.ecell_attempt_ts??0)>=10)kick_collect(true,'full');}
+ else if(now-(cache.slow_ts??0)>=cfg.at_slow_interval)kick_collect(false,'full');
+}
+
+function collect_inner(fast) {
 	writefile(fast ? LOCK_FAST : LOCK, sprintf('%d %d', own_pid() ?? 0, time()));
-	if (fast) {
-		let radio = fast_radio();
-		storejson(FAST_CACHE, FAST_CACHE + '.new', radio);
-		return;
-	}
+	let cached_radio=loadjson(FAST_CACHE);
+    let sampled=cached_radio?.signal_ts??cached_radio?.ts;
+    let due=sampled==null || time()<sampled || time()-sampled>=config().at_interval;
+    let fresh_radio=(fast || due)?remember_radio(fast_radio()):cached_radio;
+    if(fast || due)fresh_radio=collect_throughput(fresh_radio);
+	if (fast) return;
 	const state = readkv(STATE);
 	const old = loadcache();
 
@@ -433,6 +509,15 @@ function collect(fast) {
 	 * tier (cells, carriers, bandwidth, AMBR, QCI, identity). */
 	let out = old ?? {};
 	out.ts = time();
+ // Bootstrap cell data first; slow identity and bearer reads must not hide it.
+ let measured = parse_ecell(atrun('AT+ECELL'));
+ out.ecell_attempt_ts = time();
+ if (length(measured)) { out.ecell = measured; out.ecell_ts = time(); }
+ storejson(CACHE, CACHE_NEW, out);
+ // A cold/temporarily busy modem gets a short bounded retry, not a full
+ // expensive identity sweep followed by a 60-second empty-list wait.
+ if (!length(out.ecell ?? [])) return;
+
 
 	let stamp = intval(state.UPDATED);
 	let age = stamp == null ? null : time() - stamp;
@@ -450,14 +535,9 @@ function collect(fast) {
 	let lte_serving = index(state.RAT ?? '', '4G') >= 0 || index(state.RAT_RAW ?? '', '4G') >= 0;
 	let key = lte_serving ? 'lte' : 'nr5g';
 
-	let tp = qnwcfg(atrun(sprintf('AT+QNWCFG="%s_throughput_info"', key)));
-	if (tp) {
-		phy.tput = {
-			dl_mcs: intval(tp[0]), ul_mcs: intval(tp[1]),
-			dl_kbps: tp[2] != null && tp[2] != '' ? (intval(tp[2]) ?? 0) * 100 : null,
-			ul_kbps: tp[3] != null && tp[3] != '' ? (intval(tp[3]) ?? 0) * 100 : null
-		};
-		phy.tput_ts = time();
+	if (fresh_radio.tput) {
+		phy.tput = fresh_radio.tput;
+		phy.tput_ts = fresh_radio.signal_ts ?? time();
 	}
 	else if (phy.tput_ts == null) phy.tput_ts = time();
 
@@ -472,6 +552,7 @@ function collect(fast) {
 		out.cesq = atfind(atrun('AT+CESQ'), '+CESQ:');
 	}
 
+    fresh_radio=refresh_radio_due(fresh_radio);
 	if (!fast) {
 		/*
 		 * Slow tier (every at_slow_interval, default 30 s): the cells and
@@ -479,7 +560,7 @@ function collect(fast) {
 		 * and the module identity.  A full sweep costs several seconds of wall
 		 * time on the shared AT channel, so it stays on its own cadence.
 		 */
-		out.ecell = parse_ecell(atrun('AT+ECELL'));
+		/* ECELL was collected and published before the metadata tier. */
 
 		/* "<rat>_ambr",<valid>,<valid>,<net dl>,<net ul>,<valid>,<valid>,<ims dl>,<ims ul> */
 		let ambr = qnwcfg(atrun(sprintf('AT+QNWCFG="%s_ambr"', key)));
@@ -515,6 +596,7 @@ function collect(fast) {
 		phy.qos_cid = qos?.cid ?? null;
 		phy.qos_apn = context?.apn ?? null;
 
+        fresh_radio=refresh_radio_due(fresh_radio);
 		let ident = out.ident ?? null;
 		let ident_ts = intval(out.ident_ts);
 		if (!ident || ident_ts == null || (time() - ident_ts) > IDENT_TTL) {
@@ -536,6 +618,7 @@ function collect(fast) {
 			if (state.IMEI) ident.imei = state.IMEI;
 		}
 		out.ident = ident;
+        fresh_radio=refresh_radio_due(fresh_radio);
 
 		out.phy = phy;
 		out.slow_ts = time();
@@ -543,6 +626,13 @@ function collect(fast) {
 	else out.phy = phy;
 
 	storejson(CACHE, CACHE_NEW, out);
+}
+
+function collect(fast) {
+ let guard = open(AT_GUARD, 'a');
+ if (!guard || !guard.lock('xn')) return;
+ try { collect_inner(fast); } catch (e) { }
+ guard.lock('u'); guard.close();
 }
 
 /* ------------------------------------------------------------------ counters */
@@ -775,7 +865,7 @@ function wifi_block(wlan_if, leases) {
 }
 
 function cpu_block() {
-	let total = 0, idle = 0;
+	let total = 0, idle = 0, valid = false;
 	let stat = readstr('/proc/stat') ?? '';
 	for (let line in split(stat, '\n')) {
 		if (index(line, 'cpu ') != 0) continue;
@@ -789,6 +879,7 @@ function cpu_block() {
 		 * The total must include user/nice/system -- summing only the tail
 		 * (what this did at first) reports just the irq/steal share, i.e. a
 		 * permanently tiny number. */
+		valid = length(vals) >= 4;
 		for (let v in slice(vals, 0, 8)) total += v;
 		/* idle + iowait, the same convention top uses for %idle */
 		idle = (vals[3] ?? 0) + (vals[4] ?? 0);
@@ -805,7 +896,42 @@ function cpu_block() {
 			max: intval(readstr(p + '/cpuinfo_max_freq')),
 			requested: intval(readstr(p + '/scaling_cur_freq')) });
 	}
-	return { n: n, total: total, idle: idle, freqs: freqs };
+	return { n: n, valid: valid ? 1 : 0, total: valid ? total : null, idle: valid ? idle : null, sample_mono: monotonic(), freqs: freqs };
+}
+
+/* One shared, boot-scoped CPU baseline. It is advanced only by reads from
+ * active pages; no new resident worker or closed-page wakeups are needed. */
+function cpu_sample() {
+ let sample=cpu_block(),now=sample.sample_mono,boot=readstr('/proc/sys/kernel/random/boot_id');
+ let previous=loadjson(CPU_CACHE),percent=null,percent_mono=null;
+ let same=boot!=null && previous?.boot_id==boot;
+ let elapsed=same && previous?.cpu?.sample_mono!=null?now-previous.cpu.sample_mono:null;
+ if(same && previous.percent!=null && previous.percent_mono!=null && now>=previous.percent_mono && now-previous.percent_mono<=15){
+  percent=previous.percent;percent_mono=previous.percent_mono;
+ }
+ if(sample.valid && same && previous.cpu?.valid && elapsed!=null && elapsed>=0.2 && elapsed<=30){
+  let total=sample.total-previous.cpu.total,idle=sample.idle-previous.cpu.idle;
+  if(total>0 && idle>=0 && idle<=total){percent=max(0,min(100,int((total-idle)*100.0/total+0.5)));percent_mono=now;}
+ }
+ // Concurrent page entries closer than 200ms keep the earlier baseline.
+ if(sample.valid && (!same || elapsed==null || elapsed<0 || elapsed>=0.2))
+  storejson(CPU_CACHE,CPU_CACHE+'.new',{boot_id:boot,cpu:sample,percent:percent,percent_mono:percent_mono});
+ sample.percent=percent;sample.percent_mono=percent_mono;
+ return sample;
+}
+
+function ppe_block() {
+ let text = readstr('/proc/lg6851f_ppe_stats');
+ let out = { ts: time(), source: 'vendor_foe_read_only', available: text != null ? 1 : 0, entries: [] };
+ if (text == null) return out;
+ for (let line in split(text, '\n')) {
+  let m = match(line, /^PPE([0-9]+) total=([0-9]+) bound=([0-9]+) unbound=([0-9]+) fin=([0-9]+) invalid=([0-9]+)$/);
+  if (!m) continue;
+  let total = intval(m[2]), bound = intval(m[3]), unbound = intval(m[4]), fin = intval(m[5]), invalid = intval(m[6]);
+  if (total <= 0 || bound + unbound + fin + invalid != total) continue;
+  push(out.entries, { id: intval(m[1]), total: total, bound: bound, unbound: unbound, fin: fin, invalid: invalid });
+ }
+ return out;
 }
 
 function mem_block() {
@@ -828,32 +954,38 @@ function storage_block() {
 	return { total_kb: total, used_kb: total - int(v.bfree * unit), avail_kb: avail };
 }
 
+function system_resources(){
+ let now=monotonic(),previous=loadjson(SYSTEM_CACHE);
+ if(previous && now>=previous.sample_mono && now-previous.sample_mono<15)return previous;
+ let sample={sample_mono:now,ts:time(),mem:mem_block(),storage:storage_block()};
+ storejson(SYSTEM_CACHE,SYSTEM_CACHE+'.new',sample);
+ return sample;
+}
+
 function temps_block() {
-	let map = {}, hottest = null;
-	for (let p in glob('/sys/class/thermal/thermal_zone*')) {
-		let name = readstr(p + '/type');
-		let v = num(readstr(p + '/temp'));
-		if (!name || v == null) continue;
-		let c = round1(v / 1000.0);
-		map[name] = c;
-		if (hottest == null || c > hottest) hottest = c;
-	}
-	/* one decimal as a string: ucode prints some doubles with a long tail
-	 * (54.299999999999997) and the view concatenates the value with "°C" */
-	let fmt = function(v) { return v == null ? null : sprintf('%.1f', v); };
-	return {
-		soc: fmt(map['soc_max']),
-		cpu: fmt(map['cpu_little0']),
-		modem: fmt(map['md0']),
-		board: fmt(map['connsys']),
-		hottest: fmt(hottest)
-	};
+ let cpu=null,modem=null,wifi=null,hottest=null,cpu_sources=[],modem_sources=[];
+ for(let p in glob('/sys/class/thermal/thermal_zone*')){
+  let name=readstr(p+'/type'),raw=num(readstr(p+'/temp'));
+  if(!name || raw==null || raw < -40000 || raw > 200000)continue;
+  let value=raw/1000.0;
+  if(hottest==null || value>hottest)hottest=value;
+  if(match(name,/^cpu_little[0-9]+$/)){cpu=cpu==null?value:max(cpu,value);push(cpu_sources,name);}
+  else if(match(name,/^md[0-9]+$/)){modem=modem==null?value:max(modem,value);push(modem_sources,name);}
+  else if(name=='connsys')wifi=value;
+ }
+ let fmt=function(v){return v==null?null:sprintf('%.1f',v);};
+ return {cpu:fmt(cpu),modem:fmt(modem),wifi:fmt(wifi),hottest:fmt(hottest),
+  sources:{cpu:cpu_sources,modem:modem_sources,wifi:wifi==null?[]:['connsys']}};
 }
 
 /* Counts are read from the same file; only the line count is needed. */
 function conntrack_count() {
  return intval(readstr('/proc/sys/net/netfilter/nf_conntrack_count'));
 }
+function conntrack_block(){
+ return {count:conntrack_count(),max:intval(readstr('/proc/sys/net/netfilter/nf_conntrack_max'))};
+}
+
 
 function uptime_seconds() {
 	let up = readstr('/proc/uptime');
@@ -880,6 +1012,7 @@ function lan_address() {
 
 /* Everything except the traffic counters (which change every traffic_interval). */
 function info_core(counters, wan, wlan_if) {
+    let resources=system_resources(),connections=conntrack_block();
 	const state = readkv(STATE);
 	/* `wan` is the raw network.interface.modem5g status; turn it into the
 	 * dashboard's WAN block (addresses, DNS, session uptime). */
@@ -907,8 +1040,9 @@ function info_core(counters, wan, wlan_if) {
 		fw: fw,
 		kernel: readstr('/proc/sys/kernel/osrelease') ?? '',
 		cpu: cpu_block(),
-		mem: mem_block(),
-		storage: storage_block(),
+		ppe: ppe_block(),
+		mem: resources.mem,
+		storage: resources.storage,
 		temps: temps_block(),
 		power: { present: 0, capacity: null, status: null, volt: null, ua: null, w: null, usb: null, in_volt: null, in_ua: null, in_w: null },
 		wan: {
@@ -933,7 +1067,7 @@ function info_core(counters, wan, wlan_if) {
 			data_paused: 0
 		},
 		capabilities: { vpn: 0, dualboot: 0 },
-		conns: conntrack_count(),
+		conns: connections.count, connections:connections,
 		vpn: { enabled: 0, engine: null, up: 0 }
 	};
 }
@@ -995,26 +1129,40 @@ function carriers_of(cells) {
 	return out;
 }
 
-function modem_health() {
- let state = readkv(STATE), fast = loadjson(FAST_CACHE);
- let age = fast?.ts != null ? time() - fast.ts : null;
- let fresh = age != null && age >= 0 && age <= 15;
- let reg = fresh ? fast.reg : null;
- let registered = reg == 1 || reg == 5 || reg == 10;
- let explicit_off = !registered && index(state.RADIO ?? '', 'RADIO_STATE_OFF') >= 0;
- let alive = fresh && fast.ok && !explicit_off;
- return { alive: alive ? 1 : 0, registered: registered ? 1 : 0,
-          signal_valid: alive && registered && fast.signal_ok ? 1 : 0,
-          age: age, reg: reg, fast: fast,
-          reason: explicit_off ? 'radio_off' : !fresh ? 'stale_signal' :
-                  !fast.ok ? 'no_response' : reg == null ? 'registration_unavailable' : !registered ? 'not_registered' :
-                  !fast.signal_ok ? 'signal_unavailable' : null };
+function modem_health(state,fast) {
+ state=state??readkv(STATE);fast=fast??loadjson(FAST_CACHE);let now=time();
+ let vreg_ts=intval(state.REGISTRATION_TS),vsignal_ts=intval(state.SIGNAL_TS),radio_ts=intval(state.RADIO_TS);
+ let vreg_age=vreg_ts!=null?now-vreg_ts:null,updated=intval(state.UPDATED),state_age=updated!=null?now-updated:null;
+ let vreg=vreg_age!=null&&vreg_age>=0&&vreg_age<=60&&state_age!=null&&state_age>=0&&state_age<=90?regstat(state.REGISTRATION):null;
+ let freg_ts=fast?.reg_ts??fast?.ts,freg_age=freg_ts!=null?now-freg_ts:null;
+ let freg=freg_age!=null&&freg_age>=0&&freg_age<=SIGNAL_MAX_AGE?fast.reg:null;
+ let reg=freg,reg_ts=freg!=null?freg_ts:null;
+ if(vreg!=null&&(reg_ts==null||vreg_ts>reg_ts)){reg=vreg;reg_ts=vreg_ts;}
+ let registered=reg==1||reg==5||reg==10;
+ let off=radio_ts!=null&&now>=radio_ts&&now-radio_ts<=90&&index(state.RADIO??'','RADIO_STATE_OFF')>=0&&(reg_ts==null||radio_ts>=reg_ts);
+ let source=fast,limit=SIGNAL_MAX_AGE,kind='at-cache';
+ let fsig_ts=fast?.signal_ts??fast?.ts,fsig_age=fsig_ts!=null?now-fsig_ts:null;
+ let vsig_age=vsignal_ts!=null?now-vsignal_ts:null,vr=num(state.RSRP);
+ // Existing vendor status collection is the offline-page source. Its measured
+ // timestamp is never replaced by the status file's periodically updated time.
+ if(vsig_age!=null&&vsig_age>=0&&vsig_age<=120&&vr!=null&&vr>=-160&&vr<=-20&&vreg!=null&&
+    (!fast?.signal_ok||fsig_age==null||fsig_age<0||fsig_age>SIGNAL_MAX_AGE||vsignal_ts>fsig_ts)){
+  source={ts:updated,signal_ts:vsignal_ts,signal_ok:1,sig:{rsrp:vr,rsrq:num(state.RSRQ),sinr:num(state.SINR)},tput:fast?.tput??null};
+  limit=120;kind='vendor-status';
+ }
+ let signal_ts=source?.signal_ts??source?.ts,age=signal_ts!=null?now-signal_ts:null;
+ let response_ts=fast?.response_ts??(fast?.ok?fast.ts:null),response_age=response_ts!=null?now-response_ts:null;
+ let alive=!off&&((response_age!=null&&response_age>=0&&response_age<=SIGNAL_MAX_AGE)||vreg!=null);
+ let valid=alive&&registered&&source?.signal_ok&&age!=null&&age>=0&&age<=limit;
+ return {alive:alive?1:0,registered:registered?1:0,signal_valid:valid?1:0,age:age,response_age:response_age,
+  retained:source?.retained?1:0,stale:valid&&age>35?1:0,delayed:valid&&age>35?1:0,source:kind,reg:reg,fast:source,
+  reason:off?'radio_off':!alive?'no_response':reg==null?'registration_unavailable':!registered?'not_registered':age==null||age>limit?'stale_signal':!valid?'signal_unavailable':null};
 }
 
 function build_cell() {
 	const state = readkv(STATE);
 	const cache = loadcache();
-	let health = modem_health();
+	let health = modem_health(state);
 	let phy = cache?.phy ?? {};
 	phy.tput = health.fast?.tput ?? null;
 	let lte_serving = index(state.RAT ?? '', '4G') >= 0 || index(state.RAT_RAW ?? '', '4G') >= 0;
@@ -1074,7 +1222,7 @@ function build_cell() {
 			if (c.rat == 'lte' && !alte) alte = c;
 		}
 		if (anr) nr = {
-			band: anr.band, arfcn: anr.arfcn, pci: anr.pci,
+			band: anr.band, arfcn: anr.arfcn, pci: anr.pci, serving: !!anr.serving,
 			rsrp: rsrp, rsrq: rsrq, sinr: sinr,
 			bw_mhz: phy?.bw_mhz ?? null, gnb: null, cid: null,
 			dl_mcs: phy?.tput?.dl_mcs ?? null, ul_mcs: phy?.tput?.ul_mcs ?? null,
@@ -1084,7 +1232,7 @@ function build_cell() {
 			center_mhz: phy?.center_mhz ?? null, point_a_arfcn: phy?.point_a_arfcn ?? null
 		};
 		if (alte) lte = {
-			band: alte.band, earfcn: alte.arfcn, pci: alte.pci,
+			band: alte.band, earfcn: alte.arfcn, pci: alte.pci, serving: !!alte.serving,
 			rsrp: alte.rsrp, rsrq: alte.rsrq, sinr: alte.sinr,
 			bw: null, enb: null, cid: null, tac: null, ca: null,
 			dl_mcs: lte_serving ? (phy?.tput?.dl_mcs ?? null) : null,
@@ -1109,7 +1257,7 @@ function build_cell() {
 		/* the timestamp follows the AT snapshot so the page redraws the slow
 		 * panels only when the band/neighbour data really changed */
 		ts: intval(cache?.slow_ts) ?? intval(cache?.ts) ?? time(),
-		health: { alive: health.alive, signal_valid: health.signal_valid, age: health.age, reason: health.reason },
+		health: { alive: health.alive, signal_valid: health.signal_valid, age: health.age, response_age: health.response_age, retained: health.retained, stale: health.stale, delayed:health.delayed, source:health.source, reason: health.reason },
 		error: health.signal_valid ? null : health.reason,
 		cfun: cfun,
 		reg: { stat: health.reg ?? 4, tac: null, cid: null, act: act },
@@ -1156,16 +1304,18 @@ function mobile_device(wan) {
  let name = wan?.l3_device ?? wan?.device ?? readkv(STATE).WAN;
  return match(name ?? '', /^ccmni[0-9]+$/) ? name : null;
 }
-function live_once(previous) {
- let now = time(), stamp = monotonic(), wan = iface_status();
+function live_once(previous,cfg) {
+ cfg=cfg??config();
+ let now=time(),stamp=monotonic(),wan=previous?.wan_status,wan_stamp=previous?.wan_sample_mono??0;
+ if(!wan || stamp<wan_stamp || stamp-wan_stamp>=5){wan=iface_status();wan_stamp=stamp;}
  let wlan_if = previous?.wlan_if ?? wifi_ifname();
  let counters = netdev_all();
  mark_up(counters, wlan_if);
  let live = { ts: now, sample_mono: stamp, info_ts: previous?.info_ts ?? 0,
               counters: counters, mobile_if: mobile_device(wan),
-              wan_up: wan?.up ? 1 : 0, wan_status: wan, wlan_if: wlan_if,
+              wan_up: wan?.up ? 1 : 0, wan_status: wan, wan_sample_mono:wan_stamp, wlan_if: wlan_if,
               info: previous?.info ?? null };
- if (!live.info || now - live.info_ts >= config().info_interval) {
+ if (!live.info || now - live.info_ts >= cfg.info_interval) {
   live.info = info_core(counters, wan, wlan_if);
   live.info_ts = now;
  }
@@ -1176,7 +1326,7 @@ function sampler_loop() {
  /* flock owns the singleton, not a timestamp written by the spawning RPC. */
  let guard = open('/tmp/fiberhomedash.sample.lock', 'a');
  if (!guard || !guard.lock('xn')) return;
- let cfg = config(), live = load_live(), last_at = 0;
+ let cfg = config(), live = load_live(), last_at = 0, last_slow = 0;
  writefile(SAMPLER,sprintf('%d %.3f',own_pid() ?? 0,monotonic()));
  for (;;) {
   let now = monotonic();
@@ -1185,11 +1335,12 @@ function sampler_loop() {
   if(now-watch>cfg.watch_timeout && now-radio_watch>cfg.watch_timeout)break;
   let active=now-watch<=15,radio_active=now-radio_watch<=15;
   if (active && (!live || now - (live.sample_mono ?? 0) >= cfg.traffic_interval))
-   live = live_once(live);
-  if (now - last_at >= ((active||radio_active) ? cfg.at_interval : 10)) {
-   kick_collect(false,'fast'); if(active||radio_active)kick_collect(false,'full'); last_at=now;
+   live = live_once(live,cfg);
+  if ((active||radio_active) && now - last_at >= cfg.at_interval) {
+   kick_radio(); last_at=now;
   }
-  sleep(active ? 500 : 1000); /* Signal-only grace has no counters, WiFi or slow AT collection. */
+  if((active||radio_active) && now-last_slow>=5){kick_slow_metadata();last_slow=now;}
+  sleep((active||radio_active) ? 1000 : 3000); /* Signal-only grace has no counters, WiFi or slow AT collection. */
  }
  try { unlink(SAMPLER); } catch (e) { }
  guard.lock('u'); guard.close();
@@ -1200,16 +1351,37 @@ function sampler_loop() {
 
 
 const methods = {
+ bootstrap:{call:function(){
+  let live=load_live();
+  return {boot_id:readstr('/proc/sys/kernel/random/boot_id'),cpu:cpu_sample(),system:system_resources(),
+          connections:live?.info?.connections??conntrack_block(),ppe:live?.info?.ppe??null};
+ }},
+ refresh_signal:{call:function(){
+  writefile(WATCH,''+monotonic());
+  kick_collect(true,'fast');kick_sampler();
+  return {accepted:1,refreshing:collect_running(LOCK)||collect_running(LOCK_FAST)?1:0};
+ }},
+
+ realtime: {call:function() {
+  writefile(WATCH, '' + monotonic());
+  kick_sampler();
+  let live = load_live();
+  return { ts: time(), sample_mono: monotonic(), boot_id: readstr('/proc/sys/kernel/random/boot_id'),
+           host: readstr('/proc/sys/kernel/hostname'), uptime: uptime_seconds(),
+           cpu: cpu_sample(), system:system_resources(), cell: build_cell(), ppe: live?.info?.ppe ?? null, connections:live?.info?.connections??null,
+           refreshing: collect_running(LOCK) || collect_running(LOCK_FAST) ? 1 : 0 };
+ }},
  cell_status:{call:function(){
   writefile(RADIO_WATCH,''+monotonic());
-  kick_collect(false,'fast');kick_collect(false,'full');kick_sampler();
+  kick_radio();kick_sampler();
   return {cell:build_cell()};
  }},
  traffic: {call:function() {
   writefile(WATCH,''+monotonic());
   let live=load_live();
-  if(!live || time()-(intval(live.ts) ?? 0)>LIVE_STALE) live=live_once(live);
   kick_sampler();
+  if(!live || time()-(intval(live.ts) ?? 0)>LIVE_STALE)
+   return {ts:time(),pending:1,net:null};
   return {ts:live.ts,net:net_block(live.counters ?? {},live.wan_up ?? 0,live.wlan_if,live.mobile_if,live.sample_mono)};
  }},
 	status: {
@@ -1218,16 +1390,11 @@ const methods = {
 			let now = time();
 			/* safety net when the sampler service is not running: the TTLs in
 			 * kick_collect keep this to one spawn per tier period */
-			kick_collect(false, 'fast');
-			kick_collect(false, 'full');
 			let live = load_live();
-			if (!live || (now - (intval(live.ts) ?? 0)) > LIVE_STALE) {
-				live = live_once(live);	/* nobody has sampled yet */
-				kick_sampler();
-			}
+			if (!live) live = {ts:now,sample_mono:monotonic(),info_ts:0,info:null,counters:{}};
 
 			kick_sampler();
-			let info = live.info ?? {};
+			let info = live.info ?? {host:readstr('/proc/sys/kernel/hostname'),uptime:uptime_seconds()};
 			info.ts = intval(live.ts) ?? now;		/* counters timestamp: the page
 			                                         * derives the rates from it */
 			info.info_ts = intval(live.info_ts) ?? info.ts;
@@ -1242,7 +1409,7 @@ const methods = {
 				cell: cell,
 				sig: null,
 				cell_age: now - (intval(cell.ts) ?? now),
-				sig_age: stamp == null ? null : now - stamp,
+				sig_age: cell.health.age,
 				refreshing: collect_running() ? 1 : 0
 			};
 		}
@@ -1250,8 +1417,7 @@ const methods = {
 
 	signal: {
 		call: function() {
-			kick_collect(false, 'fast');
-			kick_collect(false, 'full');
+			kick_radio();
 			let c = build_cell();
 			return {
 				cfun: c.cfun, reg: c.reg, reg5g: c.reg5g, sig_src: c.sig_src,
@@ -1288,7 +1454,10 @@ function cli_arg(n) {
 switch (cli_arg(0)) {
 case 'collect':
 	try { collect(cli_arg(1) == 'fast'); } catch (e) { }
-	try { unlink(cli_arg(1) == 'fast' ? LOCK_FAST : LOCK); } catch (e) { }
+	try {
+		let lockfile = cli_arg(1) == 'fast' ? LOCK_FAST : LOCK;
+		if (intval(split(trim(readstr(lockfile) ?? ''), ' ')[0]) == own_pid()) unlink(lockfile);
+	} catch (e) { }
 	return null;
 
 case 'sample':

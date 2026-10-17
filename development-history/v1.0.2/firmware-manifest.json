@@ -1,0 +1,45 @@
+{
+  "version": "v1.0.2",
+  "web_package": "lg6851f-pro-v1.0.2-public-sysupgrade.tar.gz",
+  "web_sha256": "a59f36735ef844dadf668b6da3e52d368a4b1d7ae1c4560de626ce5c7ebdb81c",
+  "web_bytes": 68064983,
+  "mtk_package": "lg6851f-pro-v1.0.2-public-mtk.zip",
+  "mtk_sha256": "dc2ab512e6223fbb297c5ec9ba9fcf1dba399d750146f192b36e9f17d6f9f90c",
+  "mtk_bytes": 68450800,
+  "rootfs_a_sha256": "a74bf0a909e54ba2f7936f22ab1fabd241595543dce47bbd95f43a723ed537f2",
+  "boot_a_sha256": "e0e6b93fb67d99e3a543383b57cbd5ca19dc38c02e013e3b1aab4aa6d0a51e3b",
+  "connsys_gnss_a_sha256": "633a1e2a19593d9cf12db4e140d893da9d1817c721381848831d90afc0b02463",
+  "base_self_use_rootfs_sha256": "f02a53cb98da20f59e6203db5316d1e629c552a3fb31e1fa13217c345dcca042",
+  "removed_personalization_paths": [
+    "etc/lg6851f-vendor618/firmware/lg6851f-board-e2p",
+    "etc/lg6851f-vendor618/hostapd24.conf",
+    "etc/lg6851f-vendor618/hostapd5.conf",
+    "etc/lg6851f-vendor618/wireless/mediatek/e2p",
+    "etc/lg6851f-vendor618/wireless/mediatek/e2p.dualband.ePA",
+    "etc/lg6851f-vendor618/wireless/mediatek/e2p.triband.iPA",
+    "lib/firmware/lg6851f-board-e2p",
+    "lib/firmware/mediatek/mt7996/mt7996_eeprom_mt6990.bin"
+  ],
+  "retained_driver_hashes": {
+    "lib/modules/6.18.44/hwnat.ko": "3776844663fca378975f208d16df83b37f8723b6d2e4c827bc0c6959a30a1b04",
+    "lib/modules/6.18.44/lg6851f_cpufreq_hw.ko": "8177eebcb1677cc82a7366af30781cd7ab329e4e2a4d878dc60a2a30957e3e5f",
+    "lib/modules/6.18.44/lg6851f_panel_leds.ko": "239d70164d5ae3a709fc84094484f7685cc26f90c7027e4e38c6f1af8f5b307e",
+    "lib/modules/6.18.44/lg6851f_ppe_stats.ko": "cbc7464d2870ecccc370097f9c6f6bcd05119c5a1488d03ed77ae7e66066b349",
+    "usr/lib/lg6851f-vendor618/modules/mtk_warp.ko": "7450a331e7b2e5147ed9ca56d930825d521b854074f6a3fbf94df709bc222db1",
+    "usr/lib/lg6851f-vendor618/modules/mt_wifi.ko": "98b892e1820d15f790575f97963065d48dc167c61f41e8c2edae2a384137dbf1",
+    "usr/lib/libiwinfo.so.20230701": "b8e2c9498ec96982e82e67092231384bc1820e879455c2899849fcf3a0ba1db7"
+  },
+  "public_privacy_scan_passed": true,
+  "public_personalization_offline_checked": true,
+  "complete_rootfs_inventory_verified": true,
+  "device_writes": false,
+  "physical_public_boot_tested": false,
+  "offline_checks": {
+    "model_netifd_power_migration_inherited": 430,
+    "browser_synchronous_luci_load": 33,
+    "cgi_migration": 8
+  },
+  "online_self_use_web_and_editor_recovery_confirmed": true,
+  "no_rf_power_instrument_measurement": true,
+  "all_prior_fixes_included": true
+}

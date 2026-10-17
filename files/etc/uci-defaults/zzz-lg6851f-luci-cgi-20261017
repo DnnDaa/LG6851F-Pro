@@ -1,0 +1,20 @@
+#!/bin/sh
+# Isolate LuCI's ubus context per request; do not reuse pre-fork native contexts.
+changed=0
+for option in ucode_prefix lua_prefix; do
+ for mapping in $(uci -q get uhttpd.main.$option); do
+  case "$mapping" in
+   /cgi-bin/luci=*)
+    uci -q del_list "uhttpd.main.$option=$mapping" || exit 1
+    changed=1
+    ;;
+  esac
+ done
+done
+value="$(uci -q get uhttpd.main.script_timeout)"
+case "$value" in
+ ''|*[!0-9]*) uci set uhttpd.main.script_timeout=60 || exit 1; changed=1 ;;
+ *) if [ "$value" -gt 60 ]; then uci set uhttpd.main.script_timeout=60 || exit 1; changed=1; fi ;;
+esac
+[ "$changed" = 0 ] || uci commit uhttpd || exit 1
+exit 0

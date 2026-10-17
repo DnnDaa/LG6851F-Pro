@@ -1,0 +1,25 @@
+{
+  "luci-app-lg6851f-cellular": {
+    "description": "Cellular traffic accounting and persistent SMS conversations",
+    "read": {
+      "ubus": {
+        "luci.lg6851fcell": [
+          "traffic_get",
+          "sms_get",
+          "job_get"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "luci.lg6851fcell": [
+          "traffic_set",
+          "sms_sync",
+          "sms_send",
+          "sms_delete",
+          "sms_clear"
+        ]
+      }
+    }
+  }
+}

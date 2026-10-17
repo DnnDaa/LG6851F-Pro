@@ -1,0 +1,121 @@
+--- a/iwinfo_nl80211.c
++++ b/iwinfo_nl80211.c
+@@ -30,6 +30,8 @@
+ #include <stdlib.h>
+ 
+ #include "iwinfo_nl80211.h"
++#include <poll.h>
++#include <time.h>
+ 
+ #define min(x, y) ((x) < (y)) ? (x) : (y)
+ 
+@@ -406,11 +408,40 @@
+ 	return nl80211_readint(buf);
+ }
+ 
++/* LG6851F stock-driver radios use fixed netifd interface names, not
++ * mac80211 path/MAC discovery. Read the configured band and then the live
++ * interface's phy index; never assume a numeric wiphy ordering. */
++static bool nl80211_vendor618_radio(const char *name, char *ifname, bool *disabled)
++{
++ struct uci_section *section;
++ const char *radio=name,*band,*value;
++ bool found=false;
++ if(!strcmp(name,"ra0"))radio="radio0";
++ else if(!strcmp(name,"rai0"))radio="radio1";
++ section=iwinfo_uci_get_radio(radio,"vendor618");
++ if(section){
++  band=uci_lookup_option_string(uci_ctx,section,"band");
++  if(band && (!strcmp(band,"2g") || !strcmp(band,"5g"))){
++   snprintf(ifname,IFNAMSIZ,"%s",!strcmp(band,"2g")?"ra0":"rai0");
++   value=uci_lookup_option_string(uci_ctx,section,"disabled");
++   if(disabled)*disabled=value && (!strcmp(value,"1") || !strcmp(value,"true"));
++   found=true;
++  }
++ }
++ iwinfo_uci_free();
++ return found;
++}
++
+ static int nl80211_phy_idx_from_uci(const char *name)
+ {
+ 	struct uci_section *s;
+ 	const char *opt;
+ 	int idx = -1;
++    char vendor_if[IFNAMSIZ],path[PATH_MAX];
++    if(nl80211_vendor618_radio(name,vendor_if,NULL)){
++        snprintf(path,sizeof(path),"/sys/class/net/%s/phy80211/index",vendor_if);
++        return nl80211_readint(path);
++    }
+ 
+ 	s = iwinfo_uci_get_radio(name, "mac80211");
+ 	if (!s)
+@@ -647,7 +678,7 @@
+ 	int cmd;
+ 	va_list ap;
+ 
+-	if (nl80211_subscribe(family, group))
++	if (family && nl80211_subscribe(family, group))
+ 		return -ENOENT;
+ 
+ 	cb = nl_cb_alloc(NL_CB_DEFAULT);
+@@ -666,8 +697,23 @@
+ 
+ 	va_end(ap);
+ 
+-	while (!cv.recv && !err)
+-		nl_recvmsgs(nls->nl_sock, cb);
++    /* A lost scan-complete event must not hang rpcd indefinitely. */
++    struct timespec now;
++    clock_gettime(CLOCK_MONOTONIC,&now);
++    int64_t deadline=(int64_t)now.tv_sec*1000+now.tv_nsec/1000000+12000;
++    while(!cv.recv && !err){
++        clock_gettime(CLOCK_MONOTONIC,&now);
++        int64_t remaining=deadline-((int64_t)now.tv_sec*1000+now.tv_nsec/1000000);
++        if(remaining<=0){err=-ETIMEDOUT;break;}
++        struct pollfd fd={.fd=nl_socket_get_fd(nls->nl_sock),.events=POLLIN};
++        int ready=poll(&fd,1,(int)remaining);
++        if(ready<0){if(errno==EINTR)continue;err=-errno;break;}
++        if(!ready){err=-ETIMEDOUT;break;}
++        if(fd.revents&(POLLERR|POLLHUP|POLLNVAL)){err=-EIO;break;}
++        int result=nl_recvmsgs(nls->nl_sock,cb);
++        if(result<0 && !cv.recv && !err){err=-EIO;break;}
++    }
++    if(!err && cv.recv==NL80211_CMD_SCAN_ABORTED)err=-ECANCELED;
+ 
+ 	nl_cb_put(cb);
+ 
+@@ -2891,11 +2937,14 @@
+ static int nl80211_get_scanlist_nl(const char *ifname, char *buf, int *len)
+ {
+ 	struct nl80211_scanlist sl = { .e = (struct iwinfo_scanlist_entry *)buf };
++    // Join before triggering, so a fast completion is not sent before
++    // membership exists. The wait below must not issue another group query.
++    if(nl80211_subscribe("nl80211","scan"))goto out;
+ 
+ 	if (nl80211_request(ifname, NL80211_CMD_TRIGGER_SCAN, 0, NULL, NULL))
+ 		goto out;
+ 
+-	if (nl80211_wait("nl80211", "scan",
++	if (nl80211_wait(NULL, "scan",
+ 	                 NL80211_CMD_NEW_SCAN_RESULTS, NL80211_CMD_SCAN_ABORTED))
+ 		goto out;
+ 
+@@ -3131,6 +3180,17 @@
+ 	int rv, mode;
+ 
+ 	*len = 0;
++    char vendor_if[IFNAMSIZ];
++    bool disabled=false;
++    if(nl80211_vendor618_radio(ifname,vendor_if,&disabled)){
++        struct ifreq ifr={0};
++        snprintf(ifr.ifr_name,sizeof(ifr.ifr_name),"%s",vendor_if);
++        if(disabled || iwinfo_ioctl(SIOCGIFFLAGS,&ifr)<0 || !(ifr.ifr_flags&IFF_UP))
++            return -EHOSTDOWN;
++        // The stock driver implements AP scan. Do not create temporary
++        // interfaces, bring an AP down, or change its address/configuration.
++        return nl80211_get_scanlist_nl(vendor_if,buf,len);
++    }
+ 
+ 	/* Got a radioX pseudo interface, find some interface on it or create one */
+ 	if (!strncmp(ifname, "radio", 5))

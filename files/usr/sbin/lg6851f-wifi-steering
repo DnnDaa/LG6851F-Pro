@@ -5,9 +5,11 @@ case "$(cat /sys/devices/system/cpu/online 2>/dev/null)" in
 esac
 result=0
 pin_irq() {
- local name="$1" mask="$2" irq
+ local name="$1" mask="$2" irq current
  for irq in $(awk -v name="$name" '$NF == name {sub(/:$/, "", $1); print $1}' /proc/interrupts); do
   [ -w "/proc/irq/$irq/smp_affinity" ] || continue
+  current=; IFS= read -r current < "/proc/irq/$irq/smp_affinity"
+  case "$current" in "$mask"|0000000"$mask")continue;;esac
   printf '%s' "$mask" > "/proc/irq/$irq/smp_affinity" || result=1
  done
 }
@@ -17,6 +19,8 @@ for dev in ra0 rai0; do
  case "$dev" in ra0) mask=2;; rai0) mask=8;; esac
  for queue in /sys/class/net/"$dev"/queues/rx-*; do
   [ -w "$queue/rps_cpus" ] || continue
+  current=; IFS= read -r current < "$queue/rps_cpus"
+  case "$current" in "$mask"|0000000"$mask")continue;;esac
   printf '%s' "$mask" > "$queue/rps_cpus" || result=1
  done
 done

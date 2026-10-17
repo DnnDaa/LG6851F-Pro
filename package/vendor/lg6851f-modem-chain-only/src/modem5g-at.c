@@ -99,7 +99,7 @@ int main(int argc, char **argv)
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
 	struct pollfd pfd = { .events = POLLIN };
-	char output[16384] = { 0 };
+	char output[262144] = { 0 };
 	size_t used = 0;
 	bool body_sent = argc == 2;
 	int fd, lockfd, ret;

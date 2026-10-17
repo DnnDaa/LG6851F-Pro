@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+'use strict';
+import * as P from '/usr/share/ucode/lg6851f/wifi-power-engine.uc';
+return {'lg6851f.wifi_power':{
+ status:{args:{radio:''},call:function(req){return P.status(req.args.radio);}}
+}};

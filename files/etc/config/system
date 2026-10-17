@@ -4,7 +4,7 @@ config system
 	option timezone '<+08>-8'
 	option zonename 'UTC'
 	option ttylogin '0'
-	option log_size '128'
+	option log_size '64'
 	option urandom_seed '0'
 	option log_proto 'udp'
 	option conloglevel '4'

@@ -1,0 +1,2 @@
+/etc/hotplug.d/iface/99-mt6990-phy-led
+/usr/bin/lg6851f-memtool

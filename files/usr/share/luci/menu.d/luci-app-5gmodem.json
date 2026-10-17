@@ -16,7 +16,7 @@
     "order": 10,
     "action": {
       "type": "view",
-      "path": "modem5g/status_cells_v20261015_1"
+      "path": "modem5g/status_cells_v20261016_1"
     },
     "depends": {
       "acl": [
@@ -25,24 +25,25 @@
     }
   },
   "admin/modem5g/sms": {
-    "title": "SMS",
+    "title": "短信",
     "order": 20,
     "action": {
       "type": "view",
-      "path": "modem5g/sms_v2"
+      "path": "modem5g/sms_v20261015_3"
     },
     "depends": {
       "acl": [
-        "luci-app-5gmodem"
+        "luci-app-5gmodem",
+        "luci-app-lg6851f-cellular"
       ]
     }
   },
   "admin/modem5g/network": {
-    "title": "Dial-up and Network",
+    "title": "拨号与网络",
     "order": 30,
     "action": {
       "type": "view",
-      "path": "modem5g/network_v3"
+      "path": "modem5g/network_v20261016_1"
     },
     "depends": {
       "acl": [
@@ -66,15 +67,28 @@
     }
   },
   "admin/modem5g/terminal": {
-    "title": "AT Debug",
+    "title": "AT 调试",
     "order": 40,
     "action": {
       "type": "view",
-      "path": "modem5g/terminal_v1"
+      "path": "modem5g/terminal_v20261016_1"
     },
     "depends": {
       "acl": [
         "luci-app-5gmodem"
+      ]
+    }
+  },
+  "admin/modem5g/traffic": {
+    "title": "流量统计",
+    "order": 25,
+    "action": {
+      "type": "view",
+      "path": "modem5g/traffic_v20261016_1"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-lg6851f-cellular"
       ]
     }
   }

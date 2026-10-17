@@ -1,0 +1,5 @@
+#!/bin/sh
+mkdir -p /etc/lg6851f-cellular /tmp/lg6851fcell-jobs
+chmod 700 /etc/lg6851f-cellular /tmp/lg6851fcell-jobs
+/etc/init.d/lg6851f-cellular-traffic enable
+exit 0

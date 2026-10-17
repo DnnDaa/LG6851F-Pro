@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "cases": 8,
+  "names": [
+    "timeout 3600 preserves listeners and custom routes; idempotent",
+    "timeout 120 preserves listeners and custom routes; idempotent",
+    "timeout 60 preserves listeners and custom routes; idempotent",
+    "timeout 30 preserves listeners and custom routes; idempotent",
+    "timeout None preserves listeners and custom routes; idempotent",
+    "timeout bad preserves listeners and custom routes; idempotent",
+    "boot script LF and shell syntax",
+    "live CGI login and authenticated pages confirmed"
+  ],
+  "online_wireless_tests": false
+}

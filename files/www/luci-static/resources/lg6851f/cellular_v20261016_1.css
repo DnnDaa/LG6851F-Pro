@@ -1,0 +1,67 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+.lg-cellular.lg-control{background:transparent;border:0;padding:0;box-shadow:none}
+.lg-cellular *{box-sizing:border-box;min-width:0}
+.lg-cellular .cell-card{background:var(--lg-panel);border:1px solid var(--lg-line);border-radius:15px;padding:16px;margin:0 0 12px;color:var(--lg-text)}
+.lg-cellular h3{font-size:13px!important;font-weight:500!important;color:var(--lg-muted)!important;margin:0 0 12px!important;line-height:1.6!important}
+.lg-cellular h3:before{content:'●';font-size:9px;color:var(--lg-accent);margin-right:8px}
+.lg-cellular .cell-kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px}
+.lg-cellular .cell-kpi{background:var(--lg-bg);padding:12px;border-radius:9px}
+.lg-cellular .cell-kpi b{display:block;font-size:20px;line-height:1.3;font-variant-numeric:tabular-nums}
+.lg-cellular .cell-kpi span{display:block;font-size:12px;color:var(--lg-muted);margin-top:3px}
+.lg-cellular .cell-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px dashed var(--lg-line);padding:5px 0;min-height:28px}
+.lg-cellular .cell-row:last-child{border-bottom:0}
+.lg-cellular .cell-key{color:var(--lg-muted)}
+.lg-cellular .cell-value{font-variant-numeric:tabular-nums;text-align:right}
+.lg-cellular .cell-note{color:var(--lg-muted);font-size:12px;line-height:1.6;margin:8px 0 0;overflow-wrap:anywhere}
+.lg-cellular .cell-error{color:var(--lg-danger)}
+.lg-cellular .cell-table-wrap{overflow:auto}
+.lg-cellular table{width:100%;border-collapse:collapse;font-size:13px;min-width:540px}
+.lg-cellular table th,.lg-cellular table td{padding:5px 8px!important;border:0!important;font-weight:400}
+.lg-cellular table th{border-bottom:1px solid var(--lg-line)!important;text-align:left;font-size:12px}
+.lg-cellular table :is(td,th):not(:first-child){text-align:right;font-variant-numeric:tabular-nums}
+.lg-cellular .cell-day-bar{height:5px;border-radius:4px;background:var(--lg-panel);width:100%;overflow:hidden}
+.lg-cellular .cell-day-bar i{display:block;height:100%;border-radius:4px;background:var(--lg-accent)}
+.lg-cellular .cell-setting{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:6px 0}
+.lg-cellular .cell-setting-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;max-width:55%}
+.lg-cellular .cell-setting-actions button{flex:none;white-space:nowrap!important}
+.lg-cellular .cell-setting-actions input{flex:0 1 105px;width:105px!important}
+.lg-cellular .cell-setting input{width:105px;text-align:center}
+.lg-cellular .cell-setting select{width:210px}
+.lg-cellular button{padding:7px 13px;border-radius:9px;cursor:pointer}
+.lg-cellular textarea{font:inherit;line-height:1.5;color:var(--lg-text)!important;background:var(--lg-panel)!important;border:1px solid var(--lg-line)!important;border-radius:9px;resize:vertical;padding:9px 12px;width:100%;min-height:42px;max-height:150px}
+.lg-cellular .sms-number{width:100%;padding:9px 12px;border-radius:9px;margin-bottom:8px}
+.lg-cellular .sms-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.lg-cellular .sms-toolbar button{min-width:130px}
+.lg-cellular .sms-chat{display:grid;grid-template-columns:minmax(180px,23%) minmax(0,1fr);height:clamp(380px,62vh,760px);gap:12px}
+.lg-cellular .sms-convs{overflow:auto;border-right:1px solid var(--lg-line);padding-right:12px}
+.lg-cellular .sms-conv{display:block;width:100%;text-align:left!important;padding:10px!important;margin-bottom:7px!important}
+.lg-cellular .sms-conv b,.lg-cellular .sms-conv small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg-cellular .sms-conv small{color:var(--lg-muted);font-size:12px;font-weight:400}
+.lg-cellular .sms-conv.selected small{color:var(--lg-on-accent)!important;opacity:.85}
+.lg-cellular .sms-thread{display:flex;flex-direction:column;min-height:0}
+.lg-cellular .sms-messages{overflow:auto;flex:1;padding:5px 2px;overscroll-behavior:contain}
+.lg-cellular .sms-line{display:flex;margin:8px 0;justify-content:flex-start}
+.lg-cellular .sms-line.out{justify-content:flex-end}
+.lg-cellular .sms-bubble{max-width:88%;background:var(--lg-panel);border:1px solid var(--lg-line);border-radius:11px;padding:9px 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.lg-cellular .sms-line.out .sms-bubble{background:var(--lg-soft);border-color:var(--lg-accent)}
+.lg-cellular .sms-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--lg-muted);font-size:11px;margin-bottom:4px}
+.lg-cellular .sms-meta button{padding:0 5px!important;border:0!important;background:transparent!important;font-size:15px}
+.lg-cellular .sms-compose{display:flex;gap:8px;align-items:flex-end;padding-top:10px}
+.lg-cellular .sms-compose button{flex:none;min-height:42px}
+.lg-cellular .cell-inline-notice{min-height:20px;font-size:12px;color:var(--lg-muted);margin:5px 0}
+@media(max-width:650px){.lg-cellular .cell-kpis{grid-template-columns:1fr}.lg-cellular .cell-card{padding:12px}.lg-cellular .cell-setting{align-items:flex-start;flex-direction:column;gap:7px}.lg-cellular .cell-setting-actions{max-width:100%;width:100%;justify-content:flex-end}.lg-cellular .cell-setting select{width:100%}.lg-cellular .sms-chat{grid-template-columns:1fr;height:auto;min-height:480px}.lg-cellular .sms-convs{display:flex;gap:7px;border:0;border-bottom:1px solid var(--lg-line);padding:0 0 8px;max-height:110px;overflow:auto}.lg-cellular .sms-conv{flex:0 0 160px}.lg-cellular .sms-thread{height:clamp(360px,60vh,700px)}.lg-cellular .sms-toolbar button{min-width:0;flex:1}.lg-cellular .sms-bubble{max-width:95%}}
+
+.lg-terminal .at-command{display:flex;gap:8px;margin-bottom:8px}
+.lg-terminal .at-command input{flex:1;width:auto;padding:8px 12px;border-radius:9px;font:13px monospace}
+.lg-terminal .at-command button{flex:none;white-space:nowrap}
+.lg-terminal .at-workspace{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:12px}
+.lg-terminal pre.at-log{height:380px;max-height:none;margin:0;background:var(--lg-panel)!important;color:var(--lg-text)!important;border:1px solid var(--lg-line);border-radius:9px;padding:12px;white-space:pre-wrap;overflow:auto;overflow-wrap:anywhere;font:13px/1.6 monospace}
+.lg-terminal .at-history-list{border:1px solid var(--lg-line);border-radius:9px;padding:8px;max-height:355px;overflow:auto;margin-top:4px}
+.lg-terminal .at-history-list button{display:block;text-align:left;width:100%;padding:5px;border:0!important;font:12px/1.4 monospace;overflow-wrap:anywhere}
+.lg-terminal .at-presets{margin-top:12px}.lg-terminal .at-presets section{margin:6px 0}
+.lg-terminal .at-chips{display:flex;flex-wrap:wrap;gap:5px}.lg-terminal .at-chips button{border-radius:20px;padding:2px 8px;min-height:22px;font:11px/1.3 monospace}
+.lg-network-page .net-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:16px;margin-top:14px}
+.lg-network-page .net-stat span,.lg-network-page .net-stat strong{display:block;overflow-wrap:anywhere}
+.lg-network-page .net-stat strong{font-size:15px;font-weight:500;margin-top:3px;font-variant-numeric:tabular-nums}
+.lg-network-page .net-link{display:inline-block;padding:7px 12px;border:1px solid var(--lg-line);border-radius:8px;color:var(--lg-accent)}
+@media(max-width:650px){.lg-terminal .at-workspace{grid-template-columns:1fr}.lg-terminal .at-history-list{display:flex;gap:7px;max-height:100px}.lg-terminal .at-history-list button{width:auto;flex:none;max-width:200px}.lg-terminal .at-command{flex-wrap:wrap}.lg-terminal .at-command input{flex-basis:100%}.lg-terminal pre.at-log{height:330px}.lg-terminal .at-command button{flex:1}}

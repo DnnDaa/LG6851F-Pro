@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "cases": 11,
+  "names": [
+    "old 30 cleared on both bands",
+    "valid maxima retained",
+    "zero retained",
+    "absent default stays absent",
+    "2g invalid does not change 5g",
+    "5g invalid does not change 2g",
+    "fractional and malformed cleared",
+    "oversized integer and injection cleared",
+    "mac80211 config untouched",
+    "zzz-lg6851f-per-rate-power-20261017 LF/shebang/syntax",
+    "obsolete AU30 script removed from overlay and listed for rootfs deletion"
+  ],
+  "device_writes": false
+}

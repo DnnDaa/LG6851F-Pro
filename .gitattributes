@@ -7,3 +7,6 @@
 *.bin binary
 *.ko binary
 *.apk binary
+
+# Unified diff context intentionally contains leading spaces and blank lines.
+*.patch -whitespace

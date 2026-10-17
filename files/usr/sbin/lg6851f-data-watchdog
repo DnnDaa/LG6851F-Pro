@@ -24,15 +24,30 @@ link_value() {
 	printf '%s' "$1" | jsonfilter -e "$2" 2>/dev/null
 }
 
+read_rx_packets() {
+ local line name bytes rest
+ RX_PACKETS=
+ while IFS= read -r line;do
+  name=${line%%:*};name=${name##* }
+  [ "$name" = "$1" ] || continue
+  IFS=' ' read -r bytes RX_PACKETS rest <<EOF
+${line#*:}
+EOF
+  case "$RX_PACKETS" in ''|*[!0-9]*)return 1;;esac
+  return 0
+ done < /proc/net/dev
+ return 1
+}
 probe_data_path() {
-	local device="$1" before after
-
-	[ -r "/sys/class/net/$device/statistics/rx_packets" ] || return 1
-	before="$(cat "/sys/class/net/$device/statistics/rx_packets")"
-	ping -I "$device" -c 1 -W 3 223.5.5.5 >/dev/null 2>&1 && return 0
-	ping -I "$device" -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && return 0
-	after="$(cat "/sys/class/net/$device/statistics/rx_packets")"
-	[ "${after:-0}" -gt "${before:-0}" ]
+ local device="$1" before after
+ [ -d "/sys/class/net/$device" ] || return 1
+ read_rx_packets "$device" || return 1
+ before=$RX_PACKETS
+ ping -I "$device" -c 1 -W 3 223.5.5.5 >/dev/null 2>&1 && return 0
+ ping -I "$device" -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && return 0
+ read_rx_packets "$device" || return 1
+ after=$RX_PACKETS
+ [ "$after" -gt "$before" ]
 }
 
 wait_cli_idle() {

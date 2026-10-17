@@ -54,7 +54,7 @@ vendor_acl() {
 }
 vendor_setup_vif() {
  local name="$1" ssid key mode network size pid hidden isolate wmm dtim_period macfilter maclist
- local hostapd_cfg='' fingerprint actual baseline drop global_country n=0 ifname="$vif"
+ local hostapd_cfg='' fingerprint actual global_country n=0 ifname="$vif"
  count=$((count+1))
  json_select config
  json_get_vars ssid key mode hidden isolate wmm dtim_period macfilter
@@ -87,7 +87,11 @@ vendor_setup_vif() {
  json_select config
  hostapd_prepare_device_config "$conf.new" nl80211
  json_select ..
- fingerprint=$(printf %s "$data" | sha256sum | cut -d' ' -f1)
+ # Power-only changes do not require hostapd or the AP to restart.
+ fingerprint=$(printf %s "$data" | /usr/sbin/lg6851f-wifi-power fingerprint) || {
+  failed=CONFIG_FINGERPRINT_FAILED; return;
+ }
+ fingerprint=$(printf %s "$fingerprint" | sha256sum | cut -d' ' -f1)
  {
   printf 'interface=%s\nbridge=br-lan\nchannel=%s\nieee80211n=1\n' "$vif" "$start_channel"
   printf '%s\n' "$hostapd_cfg"
@@ -113,36 +117,23 @@ vendor_setup_vif() {
   hostapd -B -P "$pidfile" "$conf" || { failed=HOSTAPD_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set phymode "$vendor_mode" || { failed=PHY_MODE_FAILED; return; }
   vendor_acl || { failed=MAC_ACL_FAILED; return; }
-  # Rebuilding the channel table is unnecessary when using driver default.
-  # A requested maximum is still distinct from calibrated RF output.
-  if [ -n "$txpower" ] && [ "$txpower" -gt 0 ]; then
-   /usr/sbin/lg6851f-mwctl "$vif" set pwr "MaxTxPwr=$txpower" || { failed=MAX_TXPOWER_FAILED; return; }
-  fi
   /usr/sbin/lg6851f-mwctl "$phy" set channel "num=$start_channel" "bw=$width" "ext_chan=$ext_chan" || { failed=CHANNEL_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set "NoForwarding=$isolate" || { failed=ISOLATION_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set hide_ssid "$hidden" || { failed=HIDDEN_SSID_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set dtim_int "$dtim_period" || { failed=DTIM_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set "WmmCapable=$wmm" || { failed=WMM_FAILED; return; }
-  # The vendor driver has no nl80211 set_tx_power. Its firmware command
-  # reduces the regulatory/SKU target in half-dB steps; never bypass SKU.
-  # Clear the previous reduction before computing an absolute limit.
-  /usr/sbin/lg6851f-mwctl "$vif" set pwr TxPower=100 || { failed=TXPOWER_PERCENT_FAILED; return; }
-  /usr/sbin/lg6851f-mwctl "$vif" set pwr DecreasePower=0 || { failed=TXPOWER_FAILED; return; }
-  drop=0
-  if [ -n "$txpower" ]; then
-   baseline=$(iw dev "$vif" info | sed -n 's/.*txpower \([0-9]*\).*/\1/p')
-   # get_tx_power may be unavailable immediately after start_ap.
-   case "$baseline" in ''|0)
-    baseline=$(iw phy "$phy" info | sed -n "/\[$start_channel\]/s/.*(\([0-9][0-9]*\)\.[0-9]* dBm).*/\1/p" | head -n 1)
-   ;; esac
-   case "$baseline" in ''|*[!0-9]*) failed=TXPOWER_UNKNOWN; return;; esac
-   [ "$txpower" -ge "$baseline" ] || drop=$(((baseline-txpower)*2))
-   [ "$drop" -eq 0 ] || /usr/sbin/lg6851f-mwctl "$vif" set pwr "DecreasePower=$drop" || { failed=TXPOWER_FAILED; return; }
-  fi
   /usr/sbin/lg6851f-mwctl "$vif" set "RTSThreshold=${rts:-2347}" || { failed=RTS_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set "FragThreshold=${frag:-2346}" || { failed=FRAG_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set "HtBssCoex=$((1-${noscan:-0}))" || { failed=COEX_FAILED; return; }
   /usr/sbin/lg6851f-mwctl "$vif" set "HtLdpc=${ldpc:-1}" || { failed=LDPC_FAILED; return; }
+  # Like the AX6000 reference, leave MCS/NSS/GI selection to vendor RA.
+  # 33 is the profile AUTO sentinel, not HE MCS 33. Re-arm on full AP setup
+  # only: power-only saves must not reset rate adaptation. Keep BE/160 and
+  # the MT7990 calibration/aggregation capabilities intact.
+  if ! /usr/sbin/lg6851f-mwctl "$vif" set HtMcs=33 ||
+     ! /usr/sbin/lg6851f-mwctl "$vif" set AutoRatePerBSS=1-15; then
+   logger -t vendor618 "$__netifd_device: could not restore vendor automatic rate control"
+  fi
   case "$distance" in ''|auto) ;; *) /usr/sbin/lg6851f-mwctl "$vif" set "Distance=$distance" || { failed=DISTANCE_FAILED; return; };; esac
   if [ "$auto_channel" = 1 ]; then
    /usr/sbin/lg6851f-mwctl "$vif" set AutoChannelSel=3 || { failed=ACS_FAILED; return; }
@@ -158,6 +149,15 @@ vendor_setup_vif() {
  done
  if [ "$auto_channel" != 1 ] && [ "$actual" != "$start_channel" ]; then
   failed=CHANNEL_NOT_APPLIED; return
+ fi
+ # Clear legacy software reduction before applying an absolute target.
+ # This also runs when only txpower changed and the existing AP stays up.
+ /usr/sbin/lg6851f-mwctl "$vif" set pwr TxPower=100 || { failed=TXPOWER_PERCENT_FAILED; return; }
+ /usr/sbin/lg6851f-mwctl "$vif" set pwr DecreasePower=0 || { failed=TXPOWER_FAILED; return; }
+ if ! /usr/sbin/lg6851f-wifi-power apply "$__netifd_device" "${txpower:-auto}" >/dev/null; then
+  # The helper restores the prior compensation on any failed readback.
+  # Keep the AP available; the wireless form reports the failure via RPC.
+  logger -t vendor618 "$__netifd_device: power target not applied; inspect firmware power status"
  fi
  printf '%s\n' "$fingerprint" > "$conf.applied"
  wireless_add_vif "$name" "$vif"
