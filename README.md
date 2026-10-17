@@ -32,11 +32,8 @@
 6. [源码结构、编译与版本边界](docs/06-源码与编译.md)
 7. [发布文件与校验](docs/07-发布与校验.md)
 
-## 版本
+
 基础版本 [openwrt-mt6990-lg6851f](https://github.com/13179415360/openwrt-mt6990-lg6851f)
-
-本版：**v1.0.2 / 2026-10-17**，OpenWrt mediatek/mt6990，Linux **6.18.44**。
-
 什么是新的：
 
 - 移植了原厂固件的所有硬件加速HNAT/WED功能（蜂窝《=》WIFI；蜂窝《=》有线；有线《=》无线）并加入了 WIFI《=》WIFI（同BISSID）硬件加速。
