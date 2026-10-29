@@ -1,0 +1,5 @@
+#!/bin/sh /etc/rc.common
+START=18
+start() {
+ ucode /usr/share/ucode/lg6851f/migrate-vendor-mlo.uc
+}

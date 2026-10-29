@@ -1,0 +1,66 @@
+#!/usr/bin/env ucode
+'use strict';
+import {readfile,writefile,open,rename,unlink} from 'fs';
+import {connect} from 'ubus';
+const DIR='/tmp/lg6851f-channel-';
+const WORKER='/usr/sbin/lg6851f-channel-scan';
+function mono(){return int(split(trim(readfile('/proc/uptime')??'0'),' ')[0]);}
+function boot(){return trim(readfile('/proc/sys/kernel/random/boot_id')??'');}
+function valid(r){return r=='radio0'||r=='radio1';}
+function load(p){try{return json(readfile(p)??'null');}catch(e){return null;}}
+function save(p,v){let f=open(p+'.new','w',0600);if(!f)die('scan state unavailable');f.write(sprintf('%J',v));f.close();if(!rename(p+'.new',p))die('scan state publish failed');}
+function state(r){let s=load(DIR+r+'.job');return s?.boot==boot()?s:null;}
+function cached(r){let c=load(DIR+r+'.cache');return c?.boot==boot()&&type(c.results)=='array'?c:null;}
+function response(r){
+ let s=state(r),c=cached(r),pending=s?.phase=='queued'||s?.phase=='running';
+ // Crashed workers must not leave the page spinning forever.
+ if(pending && mono()-(s?.started??0)>95)pending=false;
+ return {pending:pending,job:s?.id,available:c!=null,revision:c?.id,results:c?.results??[],
+  error:pending?null:(s?.error??(s && s.phase!='done'?'扫描进程未完成，请重试':null))};
+}
+function start(r,refresh){
+ if(!valid(r))return {pending:false,available:false,error:'不支持的无线频段'};
+ let guard=open(DIR+r+'.request-lock','a',0600);
+ if(!guard||!guard.lock('xn')){guard?.close();return response(r);}
+ let out=response(r),s=state(r);
+ // Reopening the page uses the RAM result. Refresh alone starts a new scan.
+ let c=cached(r);
+ if(!out.pending && (!out.available||refresh||mono()-(c?.mono??0)>=60) && (!s||mono()-s.started>=5)){
+  let id=''+mono()+'-'+int(split(readfile('/proc/self/stat')??'0',' ')[0]);
+  save(DIR+r+'.job',{boot:boot(),id:id,started:mono(),phase:'queued'});
+  system(WORKER+' '+r+' '+id+' </dev/null >/dev/null 2>&1 &');
+ }
+ guard.lock('u');guard.close();return response(r);
+}
+function finish(r,id,results,error){
+ let s=state(r);if(!s||s.id!=id)return;
+ if(results!=null)save(DIR+r+'.cache',{boot:boot(),id:id,mono:mono(),results:results});
+ save(DIR+r+'.job',{...s,phase:error?'error':'done',error:error});
+}
+function run(r,id){
+ if(!valid(r)||!match(id??'',/^[0-9]+-[0-9]+$/))return;
+ let s=state(r);if(s?.id!=id)return;
+ save(DIR+r+'.job',{...s,phase:'running'});
+ // Query netifd, not another rpcd plugin. No station table traversal.
+ let u=connect(),w=null;try{w=u?.call('network.wireless','status');}catch(e){}u?.disconnect();
+ let dev=null;
+ if(w?.[r]?.up && !w[r].pending && !w[r].disabled)
+  for(let iface in w[r].interfaces??[]){
+   if(!match(iface.ifname??'',/^[A-Za-z0-9_.-]{1,15}$/))continue;
+   let flags=trim(readfile('/sys/class/net/'+iface.ifname+'/flags')??'');
+   if(match(flags,/^0x[0-9a-fA-F]+$/)&&(int(flags,16)&1)){dev=iface.ifname;break;}
+  }
+ if(!dev){finish(r,id,null,'无线频段未启动，无法扫描');return;}
+ let p=DIR+r+'.'+id+'.result';
+ let rc=system('/usr/bin/timeout -k 2 60 /usr/bin/lg6851f-scan-results '+dev+' >'+p+' 2>/dev/null');
+ let result=rc==0?load(p):null;unlink(p);
+ if(type(result?.results)=='array')finish(r,id,result.results,null);
+ else finish(r,id,null,rc==124||rc==137?'无线扫描超时，请稍后重试':'无线驱动未完成扫描，请稍后重试');
+}
+function arg(i){try{return (ARGV??[])[i];}catch(e){return null;}}
+if(arg(0)=='run'){run(arg(1),arg(2));return null;}
+if(arg(0)=='busy'){finish(arg(1),arg(2),null,'无线正在配置或采样，请稍后重试');return null;}
+return {'lg6851f.scan':{
+ start:{args:{device:'',refresh:false},call:function(req){return start(req.args.device,req.args.refresh);}},
+ status:{args:{device:''},call:function(req){return valid(req.args.device)?response(req.args.device):{pending:false,available:false,error:'不支持的无线频段'};}}
+}};

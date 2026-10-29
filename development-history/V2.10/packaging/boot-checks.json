@@ -1,0 +1,22 @@
+{
+  "a": {
+    "sha256": "19c260a01c96786c7d3809db4befe1d1791efe6d9054c18c46b52b12839ea450",
+    "kernel_Image_sha256": "ff805d39450a04f011cf859cfdddbda7dfcde8b7600ee1bb0bdedbebc7a42f60",
+    "root_partition": "/dev/mmcblk0p26",
+    "cert1_identical": true,
+    "cert1_signature_valid": true,
+    "cert2_signature_valid": true,
+    "header_and_body_hashes_valid": true,
+    "android_boot_id_valid": true
+  },
+  "b": {
+    "sha256": "9d179062704a5d651792d7e0490322e3aa5bc0413f1c194829d728c99e52bcdf",
+    "kernel_Image_sha256": "ff805d39450a04f011cf859cfdddbda7dfcde8b7600ee1bb0bdedbebc7a42f60",
+    "root_partition": "/dev/mmcblk0p39",
+    "cert1_identical": true,
+    "cert1_signature_valid": true,
+    "cert2_signature_valid": true,
+    "header_and_body_hashes_valid": true,
+    "android_boot_id_valid": true
+  }
+}

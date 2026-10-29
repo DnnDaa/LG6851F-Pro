@@ -20,3 +20,5 @@ private-device-work/
 /vendor-source/**/*.cmd
 /vendor-source/**/Module.symvers
 /vendor-source/**/modules.order
+
+/release-runtime/

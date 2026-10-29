@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+umask 077
+mkdir -p /var/run/lg6851f-hostapd /var/run/hostapd
+chmod 700 /var/run/lg6851f-hostapd
+# Same PID survives exec; workers retire as soon as their owner is replaced.
+printf '%s\n' "$$" >/var/run/lg6851f-hostapd/owner
+# Reconcile after daemon startup, including a respawn with no applied markers.
+# The worker waits for in-flight netifd operations and uses forced reconf for
+# missing registrations. Plain network reload skips unchanged radio configs.
+# The foreground launcher is waited by this shell. Its detached worker is
+# adopted/reaped by PID 1, rather than becoming a child of hostapd after exec.
+/usr/libexec/lg6851f-detach /usr/sbin/lg6851f-auth-recover "$$" </dev/null >/dev/null 2>&1 9>&- ||
+ logger -t lg6851f-hostapd 'Could not queue authentication recovery'
+exec /usr/sbin/lg6851f-hostapd -g /var/run/lg6851f-hostapd/global

@@ -1,0 +1,54 @@
+#!/bin/sh
+# Demand-driven supervisor. Never reload Wi-Fi or reboot the router.
+umask 077
+SELF=/usr/sbin/lg6851f-wireless-sampler
+OWNER=/tmp/lg6851f-wireless.owner
+WATCH=/tmp/lg6851f-wireless.watch
+HEALTH=/tmp/lg6851f-wireless.health
+exec 8>/tmp/lg6851f-wireless.supervisor.lock
+flock -n 8 || exit 0
+mono() { local seconds rest; read -r seconds rest </proc/uptime; MONO=${seconds%.*}; }
+heartbeat() { local stamp; mono; stamp=$MONO; [ $((stamp-heartbeat_last)) -ge 5 ] || return 0; heartbeat_last=$stamp; printf '%s %s\n' "$$" "$stamp" >"$OWNER.new" && mv -f "$OWNER.new" "$OWNER"; }
+health() { printf '%s\n' "$1" >"$HEALTH.new" && mv -f "$HEALTH.new" "$HEALTH"; }
+heartbeat_last=-10
+child=
+cleanup() {
+ [ -z "$child" ] || kill -TERM "$child" 2>/dev/null
+ exit 0
+}
+trap cleanup INT TERM
+last=-10
+while :; do
+ mono; now=$MONO
+ watch=0; read -r watch <"$WATCH" 2>/dev/null || :
+ case "$watch" in ''|*[!0-9.]*) watch=0;; esac
+ watch=${watch%.*}
+ [ $((now-watch)) -le 20 ] && [ "$now" -ge "$watch" ] || break
+ heartbeat
+ if [ -f /tmp/lg6851f-wireless.wake ]; then rm -f /tmp/lg6851f-wireless.wake; last=-10; fi
+ if [ $((now-last)) -ge 10 ]; then
+  last=$now
+  health collecting
+  # Close supervisor flock in the child, but the ucode collector holds its own driver flock.
+  /usr/bin/timeout -k 2 8 ucode /usr/libexec/lg6851f-wireless.ucb collect 8>&- &
+  child=$!
+  while kill -0 "$child" 2>/dev/null; do
+   heartbeat
+   mono; if [ $((MONO-last)) -ge 12 ]; then
+    kill -KILL "$child" 2>/dev/null
+    health timeout
+    break
+   fi
+   sleep 1
+  done
+  # Never wait indefinitely for an uninterruptible task. Do not pile up more workers.
+  if kill -0 "$child" 2>/dev/null; then
+   while kill -0 "$child" 2>/dev/null; do heartbeat; sleep 2; done
+  fi
+  wait "$child"; rc=$?; child=
+  case "$rc" in 0) health ok;; 75) health driver_busy;; 124|137|143) health timeout;; *) health unavailable;; esac
+ fi
+ sleep 1
+done
+# Keep the PID record until exit; readers check the live command, not a stale timestamp.
+exit 0

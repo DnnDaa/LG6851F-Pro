@@ -16,7 +16,8 @@
         ],
         "fiberhomedash": [
           "status",
-          "cell_status"
+          "cell_status",
+          "refresh_signal"
         ]
       }
     },

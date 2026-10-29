@@ -1,0 +1,78 @@
+{
+  "method": "clean full vendor rebuild; three bounded parser/action objects, AP EXTERNAL_AUTH PMKSA/rate objects, seven AArch64 entry redirections, one wiphy_register call relocation and the radar array-index correction",
+  "source_sha256": "535c6748fd17d95cd53f3d01a7f690056aba749010e3c716b70ef905ef14be7e",
+  "output_sha256": "6c049bf5277797d89289731a27db59d9a30a0449899803eac2cb7fae89ce1aff",
+  "output_bytes": 15002928,
+  "patched_entries": [
+    {
+      "original_symbol": "defrag_multi_link_per_sta_profile",
+      "replacement_symbol": "lg6_defrag_multi_link_per_sta_profile",
+      "entry_offset": 2215212,
+      "instruction_before": "ff8302d1",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "parse_multi_link_per_sta_profile",
+      "replacement_symbol": "lg6_parse_multi_link_per_sta_profile",
+      "entry_offset": 2216096,
+      "instruction_before": "fd7bbaa9",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "parse_multi_link_ie",
+      "replacement_symbol": "lg6_parse_multi_link_ie",
+      "entry_offset": 2217600,
+      "instruction_before": "ffc301d1",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "PeerProtectEHTAction",
+      "replacement_symbol": "lg6_PeerProtectEHTAction",
+      "entry_offset": 1236160,
+      "instruction_before": "ff0302d1",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "CFG80211_OpsPmksaSet",
+      "replacement_symbol": "lg9_pmksa_set",
+      "entry_offset": 3783168,
+      "instruction_before": "fd7bbba9",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "CFG80211_OpsPmksaFlush",
+      "replacement_symbol": "lg9_pmksa_flush",
+      "entry_offset": 3765472,
+      "instruction_before": "00008052",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    },
+    {
+      "original_symbol": "get_rate_flag",
+      "replacement_symbol": "lg9_get_rate_flag",
+      "entry_offset": 1540268,
+      "instruction_before": "001c0012",
+      "instruction_after": "00000014",
+      "relocation": "R_AARCH64_JUMP26"
+    }
+  ],
+  "wiphy_registration_call_offsets": [
+    3908012
+  ],
+  "radar_patch": {
+    "symbol": "nl80211_send_event_radar_notify",
+    "file_offset": 3898312,
+    "instruction_before": "e503132a",
+    "instruction_after": "65060051"
+  },
+  "untouched_original_functions": 9795,
+  "new_kernel_imports": [],
+  "emlsr_emlmr_t2l_disabled": false,
+  "pmkid_validation_bypassed": false,
+  "hardware_load_tested": false
+}

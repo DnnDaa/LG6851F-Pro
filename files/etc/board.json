@@ -1,0 +1,26 @@
+{
+  "model": {
+    "id": "fiberhome,lg6851f",
+    "name": "FiberHome Pro LG6851F"
+  },
+  "network": {
+    "lan": {
+      "device": "eth0",
+      "protocol": "static"
+    },
+    "wan": {
+      "device": "eth1",
+      "protocol": "dhcp"
+    },
+    "modem5g": {
+      "device": "ccmni",
+      "protocol": "ql_datacall",
+      "apn": "",
+      "iptype": "3",
+      "roamingtype": "3",
+      "mtu": "1400",
+      "auto_conf": "1",
+      "auto": "1"
+    }
+  }
+}

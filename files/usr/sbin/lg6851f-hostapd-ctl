@@ -1,0 +1,23 @@
+#!/usr/bin/lua
+local n=require 'nixio'
+local fs=require 'nixio.fs'
+local target=arg[1]
+local peer
+if target=='global' then peer='/var/run/lg6851f-hostapd/global'
+elseif target and (target:match('^ra[0-7]$') or target:match('^rai[0-7]$')) then
+ peer='/var/run/hostapd/'..target
+else io.stderr:write('Invalid control target\n');os.exit(2) end
+local command=table.concat(arg,' ',2)
+if #command==0 or #command>4096 or command:find('[\r\n]') then os.exit(2) end
+local path='/tmp/lg6851f-ctrl-'..n.getpid()
+local sock=assert(n.socket('unix','dgram'))
+local ok,reply=pcall(function()
+ assert(sock:bind(path));assert(sock:connect(peer))
+ local slow=command:match('^ADD ') or command=='ENABLE' or command:match('^REMOVE ')
+ assert(sock:setsockopt('socket','rcvtimeo',slow and 6 or 2))
+ assert(sock:send(command));return assert(sock:recv(65535))
+end)
+sock:close();fs.unlink(path)
+if not ok then io.stderr:write('Native authentication control unavailable\n');os.exit(1) end
+io.write(reply)
+if reply:match('^FAIL') or reply:match('^UNKNOWN') then os.exit(1) end

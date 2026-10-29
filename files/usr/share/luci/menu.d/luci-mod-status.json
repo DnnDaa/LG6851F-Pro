@@ -144,7 +144,7 @@
     "order": 7,
     "action": {
       "type": "view",
-      "path": "status/channel_analysis_v20261016_1"
+      "path": "status/channel_analysis_v20261021_27"
     },
     "depends": {
       "acl": [

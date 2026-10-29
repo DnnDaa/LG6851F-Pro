@@ -1,0 +1,10 @@
+#!/bin/sh
+
+[ -r /usr/libexec/lg6851f-luci-uhttpd.ucb ] || exit 0
+
+uci -q del_list 'uhttpd.main.ucode_prefix=/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc'
+uci -q del_list 'uhttpd.main.ucode_prefix=/cgi-bin/luci=/usr/libexec/lg6851f-luci-uhttpd.ucb'
+uci -q add_list 'uhttpd.main.ucode_prefix=/cgi-bin/luci=/usr/libexec/lg6851f-luci-uhttpd.ucb'
+uci -q commit uhttpd
+
+exit 0

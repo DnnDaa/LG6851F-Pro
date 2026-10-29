@@ -1,2 +1,30 @@
+
 config preferences 'main'
- option description 'Per-LED overrides; absent entries use automatic status'
+	option description 'Five physical front panel indicators'
+	option layout_version '2'
+
+config led 'cell4g'
+	option mode 'off'
+	option color 'green'
+	option interval '500'
+
+config led 'cell5g'
+	option mode 'off'
+	option color 'green'
+	option interval '500'
+
+config led 'network'
+	option mode 'off'
+	option color 'green'
+	option interval '500'
+
+config led 'power'
+	option mode 'off'
+	option color 'green'
+	option interval '500'
+
+config led 'wifi'
+	option mode 'off'
+	option interval '500'
+	option color 'green'
+

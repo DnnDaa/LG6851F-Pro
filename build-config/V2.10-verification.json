@@ -1,0 +1,35 @@
+{
+  "private-a": {
+    "passed": true,
+    "squashfs_entries_read_back": 2848,
+    "unchanged_kernel_modules": 120,
+    "apk_file_hashes_verified": 1820,
+    "random_bootctrl_records_tested": 10000,
+    "web_mtk_images_identical": true,
+    "zip_crc_passed": true,
+    "public_privacy_checked": false,
+    "physical_flash_or_boot_tested": false
+  },
+  "public-a": {
+    "passed": true,
+    "squashfs_entries_read_back": 2822,
+    "unchanged_kernel_modules": 120,
+    "apk_file_hashes_verified": 1802,
+    "random_bootctrl_records_tested": 10000,
+    "web_mtk_images_identical": true,
+    "zip_crc_passed": true,
+    "public_privacy_checked": true,
+    "physical_flash_or_boot_tested": false
+  },
+  "public-b": {
+    "passed": true,
+    "squashfs_entries_read_back": 2822,
+    "unchanged_kernel_modules": 120,
+    "apk_file_hashes_verified": 1802,
+    "random_bootctrl_records_tested": 10000,
+    "web_mtk_images_identical": true,
+    "zip_crc_passed": true,
+    "public_privacy_checked": true,
+    "physical_flash_or_boot_tested": false
+  }
+}

@@ -1,3 +1,5 @@
+
 config fan 'main'
- option mode 'auto'
- option percent '50'
+	option mode 'auto'
+	option percent '100'
+

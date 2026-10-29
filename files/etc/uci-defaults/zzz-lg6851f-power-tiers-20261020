@@ -1,0 +1,2 @@
+#!/bin/sh
+ucode /usr/share/ucode/lg6851f/migrate-power-tiers.uc

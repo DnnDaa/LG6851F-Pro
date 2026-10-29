@@ -1,0 +1,3 @@
+#!/bin/sh
+# Exact firmware LuCI entry and modules, precompiled for this build.
+exec /usr/bin/ucode /usr/libexec/lg6851f-luci.ucb "$@"

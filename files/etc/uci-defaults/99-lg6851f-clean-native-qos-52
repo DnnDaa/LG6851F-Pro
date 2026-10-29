@@ -1,0 +1,67 @@
+#!/bin/sh
+lg6851f_prune_retired_qos_upper() {
+ local upper="$1" rel parent part rest safe
+ [ -d "$upper" ] && [ ! -L "$upper" ] || return 0
+ while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  parent="$upper"; rest="${rel%/*}"; safe=1
+  while [ -n "$rest" ]; do
+   part="${rest%%/*}"; parent="$parent/$part"
+   [ ! -L "$parent" ] || { safe=0; break; }
+   case "$rest" in */*) rest="${rest#*/}" ;; *) rest= ;; esac
+  done
+  [ "$safe" = 1 ] || continue
+  [ ! -d "$upper/$rel" ] || [ -L "$upper/$rel" ] || continue
+  rm -f -- "$upper/$rel"
+ done <<'LG6851F_RETIRED_QOS'
+etc/hotplug.d/iface/90-lg6851f-auto-qos-wan
+etc/init.d/lg6851f-hnat-qos
+etc/init.d/ql_entry_auto_qos
+etc/init.d/ql_speed_monitor_mgr
+etc/rc.d/K10lg6851f-hnat-qos
+etc/rc.d/K10ql_entry_auto_qos
+etc/rc.d/K11ql_speed_monitor_mgr
+etc/rc.d/S98ql_speed_monitor_mgr
+etc/rc.d/S99lg6851f-hnat-qos
+etc/rc.d/S99ql_entry_auto_qos
+etc/uci-defaults/99-lg6851f-vendor-auto-qos
+usr/bin/auto_qos_ip6_white_op.sh
+usr/bin/auto_qos_ip_white_op.sh
+usr/bin/auto_qos_mac_white_op.sh
+usr/bin/ql_entry_auto_qos
+usr/bin/ql_speed_monitor_mgr
+usr/lib/iptables/libxt_MARK.so
+usr/lib/lg6851f-vendor-qos/libmipc_msg.so
+usr/lib/lg6851f-vendor-qos/libql_qlog.so
+usr/lib/lg6851f-vendor-qos/libql_speed_monitor.so
+usr/lib/libblobmsg_json.so.20210516
+usr/lib/libiptext.so
+usr/lib/libiptext4.so
+usr/lib/libiptext6.so
+usr/lib/libiptext_arpt.so
+usr/lib/libiptext_ebt.so
+usr/lib/libql_speed_monitor.so
+usr/libexec/lg6851f-auto-qos/cat
+usr/libexec/lg6851f-auto-qos/hwnat
+usr/libexec/lg6851f-auto-qos/hwnat-clear
+usr/libexec/lg6851f-auto-qos/ip6tables
+usr/libexec/lg6851f-auto-qos/iptables
+usr/libexec/lg6851f-auto-qos/update-wan
+usr/libexec/lg6851f-auto-qos/xtables-nft-multi
+LG6851F_RETIRED_QOS
+}
+
+lg6851f_prune_retired_qos_upper /
+changed=0
+for key in ql_entry_auto_qos ql_speed_monitor_mgr log_file log_buffer_size; do
+ if uci -q get "system.@system[0].$key" >/dev/null; then
+  uci -q delete "system.@system[0].$key" || exit 1
+  changed=1
+ fi
+done
+if [ "$(uci -q get system.@system[0].log_size)" != 64 ]; then
+ uci -q set system.@system[0].log_size=64 || exit 1
+ changed=1
+fi
+[ "$changed" = 0 ] || uci -q commit system || exit 1
+exit 0

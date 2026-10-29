@@ -1,0 +1,32 @@
+#!/bin/sh /etc/rc.common
+# Apply saved policy after normal network/module startup. A failed early
+# S11 sysctl application must not silently become the selected queue policy.
+START=96
+STOP=01
+start() {
+ local chosen modules=/lib/modules/$(uname -r)
+ chosen=$(awk -F= '
+  /^[[:space:]]*net\.core\.default_qdisc[[:space:]]*=/ {
+   v=$2;sub(/#.*/,"",v);gsub(/[[:space:]"\047]/,"",v)
+  } END{print v}' /etc/sysctl.d/*.conf /etc/sysctl.conf)
+ case "$chosen" in
+  cake|fq|fq_codel)
+   if [ ! -d "/sys/module/sch_$chosen" ]; then
+    modprobe "sch_$chosen" 2>/dev/null || insmod "$modules/sch_$chosen.ko" || {
+     logger -t lg6851f-qdisc "Configured queue module unavailable: $chosen"
+     return 1
+    }
+   fi
+   sysctl -q -w "net.core.default_qdisc=$chosen" || return 1
+   [ "$(cat /proc/sys/net/core/default_qdisc)" = "$chosen" ] || return 1
+  ;;
+  '') ;; # Without a saved choice, retain the kernel's current policy.
+  *) return 0;; # A user-owned scheduler is outside this service's scope.
+ esac
+ /usr/sbin/lg6851f-qdisc || {
+  /usr/sbin/lg6851f-qdisc-retry --queue
+  logger -t lg6851f-qdisc 'Could not apply configured software queue policy'
+  return 1
+ }
+}
+reload() { start; }

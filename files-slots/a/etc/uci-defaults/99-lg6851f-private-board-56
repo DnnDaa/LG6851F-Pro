@@ -1,0 +1,10 @@
+#!/bin/sh
+# Board defaults are consumed by root during provisioning, never world-readable.
+grep -qw 'bootslot=a' /proc/cmdline || exit 0
+grep -qw 'root=/dev/mmcblk0p26' /proc/cmdline || exit 0
+[ ! -f /etc/board.json ] || {
+ case "$(LC_ALL=C ls -ldn /etc/board.json)" in
+ -rw-------\ *) ;;
+ *) chmod 600 /etc/board.json ;;
+ esac
+}

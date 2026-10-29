@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// MT6990 integration: actual vendor modules, existing firewall and sysctl sources.
+'use strict';
+import { readfile, stat, popen } from 'fs';
+import { cursor } from 'uci';
+
+function text(path) { return trim(readfile(path) || ''); }
+function yes(path) { return index(['Y','y','1'], text(path)) >= 0; }
+function command(cmd) {
+ let p = popen(cmd, 'r');
+ if (!p) return {code:1, output:''};
+ let output = p.read('all') || '', code = p.close();
+ return {code:code, output:output};
+}
+function status() {
+ let c=cursor(), defs=c.get_all('firewall') || {}, sw=false, hw=false;
+ for(let key, item in defs) if(item['.type']=='defaults') { sw=item.flow_offloading=='1'; hw=item.flow_offloading_hw=='1'; break; }
+ let flow=command('nft list flowtable inet fw4 ft 2>/dev/null');
+ let queue=command('tc qdisc show dev eth0 2>/dev/null');
+ let entries=[], data=readfile('/proc/lg6851f_ppe_stats') || '';
+ for(let line in split(data,'\n')) {
+  let m=match(line,/^PPE([0-9]+) total=([0-9]+) bound=([0-9]+) unbound=([0-9]+) fin=([0-9]+) invalid=([0-9]+)$/);
+  if(m) push(entries,{id:+m[1],total:+m[2],bound:+m[3]});
+ }
+ return {supported:!!stat('/lib/netifd/wireless/vendor618.sh'),
+  native_hnat_loaded:!!stat('/sys/module/hwnat'),
+  wed_loaded:!!stat('/sys/module/mtk_wed') && !!stat('/sys/module/mtk_warp'),
+  cpu_wifi:yes('/sys/module/hwnat/parameters/cpu_wifi_accel'),
+  intrabss:yes('/sys/module/mt_wifi/parameters/intrabss_bridge'),
+  configured_sw:sw,configured_hw:hw,
+  flowtable_present:flow.code==0,
+  flowtable_hardware_requested:flow.code==0 && !!match(flow.output,/flags\s+offload/),
+  ppe:entries,
+  cc:text('/proc/sys/net/ipv4/tcp_congestion_control'),
+  cc_available:split(text('/proc/sys/net/ipv4/tcp_available_congestion_control'),/\s+/),
+  qdisc:text('/proc/sys/net/core/default_qdisc'),eth0_qdisc:queue.output,
+  stats_interval_ms:text('/sys/module/hwnat/parameters/mib_stats_interval_ms'),
+  nat_engine_ready:!!stat('/sys/module/nf_nat/parameters/lg6851f_nat_mode'),
+  nat_mode:stat('/sys/module/nf_nat/parameters/lg6851f_nat_mode')?+text('/sys/module/nf_nat/parameters/lg6851f_nat_mode'):null,
+  nat_saved:+(c.get('turboacc','main','nat_mode') || '0')};
+}
+function apply(a) {
+ if(type(a.sw)!='bool' || type(a.hw)!='bool' || (a.hw && !a.sw) ||
+    index(['reno','cubic','bbr'],a.cc)<0 || index(['cake','fq','fq_codel'],a.qdisc)<0)
+  return {success:false,error:'参数无效；硬件流量分载需要同时启用软件流量分载。'};
+ if(!stat('/lib/netifd/wireless/vendor618.sh'))return {success:false,error:'仅支持 LG6851F vendor618 固件。'};
+ let r=command(sprintf('/usr/libexec/lg6851f-turboacc apply %d %d %s %s 2>&1',a.sw?1:0,a.hw?1:0,a.cc,a.qdisc));
+ return {success:r.code==0,error:r.code==0?null:trim(r.output),message:r.code==0?trim(r.output):null,status:status()};
+}
+return {'luci.turboacc':{
+ status:{call:function(){return status();}},
+ set_nat:{args:{mode:0},call:function(req){
+  let mode=req.args.mode;
+  if(type(mode)!='int' || mode<0 || mode>2)return {success:false,error:'NAT 模式无效'};
+  let r=command(sprintf('/usr/libexec/lg6851f-nat-mode set %d 2>&1',mode));
+  return {success:r.code==0,error:r.code==0?null:trim(r.output),message:r.code==0?trim(r.output):null,status:status()};
+ }},
+ apply:{args:{sw:true,hw:true,cc:'bbr',qdisc:'cake'},call:function(req){return apply(req.args);}}
+}};

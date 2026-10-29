@@ -1,0 +1,78 @@
+{
+  "version": "V2.10",
+  "source_systemfix": 94,
+  "target_slot": "a",
+  "format": "lg6851f-mt6990-a-signed-v1",
+  "kernel": "6.18.44",
+  "public_build": true,
+  "source_94_b_sha256": "87cf0766f51b87ffff45ec8b153f5408afe4d6539368a650d56d1dd79bc90f69",
+  "boot_signature_checks": {
+    "sha256": "19c260a01c96786c7d3809db4befe1d1791efe6d9054c18c46b52b12839ea450",
+    "kernel_Image_sha256": "ff805d39450a04f011cf859cfdddbda7dfcde8b7600ee1bb0bdedbebc7a42f60",
+    "root_partition": "/dev/mmcblk0p26",
+    "cert1_identical": true,
+    "cert1_signature_valid": true,
+    "cert2_signature_valid": true,
+    "header_and_body_hashes_valid": true,
+    "android_boot_id_valid": true
+  },
+  "mtk_selected_partitions": [
+    {
+      "name": "connsys_gnss_a",
+      "address": "0xb008000",
+      "size": 8388608
+    },
+    {
+      "name": "boot_a",
+      "address": "0x11a08000",
+      "size": 33554432
+    },
+    {
+      "name": "rootfs_a",
+      "address": "0x13a08000",
+      "size": 134217728
+    }
+  ],
+  "module_count": 120,
+  "modules_unchanged_from_94B": true,
+  "cold_boot_tested": false,
+  "cross_device_tested": false,
+  "device_flashing_performed": false,
+  "other_slot_firmware_written": false,
+  "shared_factory_ssh_written": false,
+  "calibration_policy": "own device read-only fh_data; donor calibration excluded",
+  "images": {
+    "boot_a.img": {
+      "bytes": 33554432,
+      "sha256": "19c260a01c96786c7d3809db4befe1d1791efe6d9054c18c46b52b12839ea450"
+    },
+    "connsys_gnss_a.img": {
+      "bytes": 8388608,
+      "sha256": "633a1e2a19593d9cf12db4e140d893da9d1817c721381848831d90afc0b02463"
+    },
+    "rootfs_a.img": {
+      "bytes": 134217728,
+      "sha256": "55481c3df6b2774f64c1d688e999e2b1e4d5f91120b635454bad6187f05f06b5"
+    }
+  },
+  "features": [
+    "Wi-Fi 7 / MLO / AP and client",
+    "incremental AP create/delete",
+    "HNAT / PPE / WED / CPU-to-Wi-Fi",
+    "TurboACC / default, UDP fullcone, randomized symmetric NAT",
+    "BBR or CUBIC, CAKE independent controls",
+    "shared cached status dashboard",
+    "dynamic cellular wan6 and LAN IPv6 RA/DHCPv6 server",
+    "Chinese UI, CPU/fan/LED, OpenClash/Mihomo and Nikki retained"
+  ],
+  "packages": {
+    "lg6851f-pro-V2.10-public-A-sysupgrade.tar.gz": {
+      "bytes": 69820471,
+      "sha256": "6caf22a8a0b831da72a999bf174162580ae3e69ace9a4e73cbb270f3902f1e15"
+    },
+    "lg6851f-pro-V2.10-public-A-mtk.zip": {
+      "bytes": 70205404,
+      "sha256": "2c059db5227c8f25d0781466149459bf116b4cd3d40d5d5a4cebabb4770a3f63"
+    }
+  }
+}

@@ -1,0 +1,599 @@
+// SPDX-License-Identifier: GPL-2.0
+
+#include <linux/types.h>
+#include <linux/atomic.h>
+#include <linux/inetdevice.h>
+#include <linux/netfilter.h>
+#include <linux/netfilter_ipv4.h>
+#include <linux/netfilter_ipv6.h>
+
+#include <net/netfilter/nf_nat_masquerade.h>
+#include <net/netfilter/nf_conntrack_expect.h>
+#include <net/netfilter/nf_conntrack_helper.h>
+#include <net/netfilter/nf_conntrack_core.h>
+#include <linux/moduleparam.h>
+
+struct masq_dev_work {
+	struct work_struct work;
+	struct net *net;
+	netns_tracker ns_tracker;
+	union nf_inet_addr addr;
+	int ifindex;
+	int (*iter)(struct nf_conn *i, void *data);
+};
+
+#define MAX_MASQ_WORKER_COUNT	16
+
+static DEFINE_MUTEX(masq_mutex);
+static unsigned int masq_refcnt __read_mostly;
+static atomic_t masq_worker_count __read_mostly;
+
+/* LG6851F compatibility modes for new IPv4 masqueraded connections:
+ * 0 = existing kernel behaviour; 1 = UDP full cone (Broadcom expectation
+ * design); 2 = per-connection randomized source ports (symmetric mode).
+ * Existing conntrack/PPE bindings retain the policy used when created.
+ */
+static unsigned int lg6851f_nat_mode;
+static int lg6851f_set_nat_mode(const char *value, const struct kernel_param *kp)
+{
+ unsigned int mode;
+ int err = kstrtouint(value, 0, &mode);
+ if (err || mode > 2)
+  return err ?: -EINVAL;
+ WRITE_ONCE(*(unsigned int *)kp->arg, mode);
+ return 0;
+}
+static const struct kernel_param_ops lg6851f_nat_mode_ops = {
+ .set = lg6851f_set_nat_mode,
+ .get = param_get_uint,
+};
+module_param_cb(lg6851f_nat_mode, &lg6851f_nat_mode_ops, &lg6851f_nat_mode, 0644);
+MODULE_PARM_DESC(lg6851f_nat_mode, "IPv4 NAT: 0=default, 1=UDP fullcone, 2=symmetric randomized ports");
+
+static void bcm_nat_expect(struct nf_conn *ct,
+                          struct nf_conntrack_expect *exp)
+{
+       struct nf_nat_range2 range;
+
+       /* This must be a fresh one. */
+       if (WARN_ON_ONCE(ct->status & IPS_NAT_DONE_MASK))
+               return;
+
+       /* Change src to where new ct comes from */
+       range.flags = NF_NAT_RANGE_MAP_IPS;
+       range.min_addr = range.max_addr =
+               ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3;
+       nf_nat_setup_info(ct, &range, NF_NAT_MANIP_SRC);
+
+       /* For DST manip, map port here to where it's expected. */
+       range.flags = (NF_NAT_RANGE_MAP_IPS | NF_NAT_RANGE_PROTO_SPECIFIED);
+       range.min_proto = range.max_proto = exp->saved_proto;
+       range.min_addr = range.max_addr = exp->saved_addr;
+       nf_nat_setup_info(ct, &range, NF_NAT_MANIP_DST);
+}
+
+/****************************************************************************/
+static int bcm_nat_help(struct sk_buff *skb, unsigned int protoff,
+                       struct nf_conn *ct, enum ip_conntrack_info ctinfo)
+{
+       int dir = CTINFO2DIR(ctinfo);
+       struct nf_conn_help *help = nfct_help(ct);
+       struct nf_conntrack_expect *exp;
+
+       if (dir != IP_CT_DIR_ORIGINAL ||
+           help->expecting[NF_CT_EXPECT_CLASS_DEFAULT])
+               return NF_ACCEPT;
+
+
+
+       /* Create expect */
+       if ((exp = nf_ct_expect_alloc(ct)) == NULL)
+               return NF_ACCEPT;
+
+       nf_ct_expect_init(exp, NF_CT_EXPECT_CLASS_DEFAULT, AF_INET, NULL,
+                         &ct->tuplehash[!dir].tuple.dst.u3, IPPROTO_UDP,
+                         NULL, &ct->tuplehash[!dir].tuple.dst.u.udp.port);
+       exp->flags = NF_CT_EXPECT_PERMANENT;
+       exp->saved_addr = ct->tuplehash[dir].tuple.src.u3;
+       exp->saved_proto.udp.port = ct->tuplehash[dir].tuple.src.u.udp.port;
+       exp->dir = !dir;
+       exp->expectfn = bcm_nat_expect;
+
+       /* Setup expect */
+       nf_ct_expect_related(exp, 0);
+       nf_ct_expect_put(exp);
+
+
+       return NF_ACCEPT;
+}
+
+/****************************************************************************/
+static struct nf_conntrack_expect_policy bcm_nat_exp_policy __read_mostly = {
+       .max_expected   = 1,
+       .timeout        = 240,
+};
+
+/****************************************************************************/
+static struct nf_conntrack_helper nf_conntrack_helper_bcm_nat __read_mostly = {
+       .name = "LG6851F-FC",
+       .me = THIS_MODULE,
+       .tuple.src.l3num = AF_INET,
+       .tuple.dst.protonum = IPPROTO_UDP,
+       .expect_policy = &bcm_nat_exp_policy,
+       .expect_class_max = 1,
+       .help = bcm_nat_help,
+};
+
+/****************************************************************************/
+static inline int find_exp(__be32 ip, __be16 port, struct nf_conn *ct)
+{
+       struct nf_conntrack_tuple tuple;
+       struct nf_conntrack_expect *i = NULL;
+
+
+       memset(&tuple, 0, sizeof(tuple));
+       tuple.src.l3num = AF_INET;
+       tuple.dst.protonum = IPPROTO_UDP;
+       tuple.dst.u3.ip = ip;
+       tuple.dst.u.udp.port = port;
+
+       rcu_read_lock();
+       i = __nf_ct_expect_find(nf_ct_net(ct), nf_ct_zone(ct), &tuple);
+       rcu_read_unlock();
+
+       return i != NULL;
+}
+
+/****************************************************************************/
+static inline struct nf_conntrack_expect *find_fullcone_exp(struct nf_conn *ct, __be32 external_ip)
+{
+       struct nf_conntrack_tuple * tp =
+               &ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+       struct nf_conntrack_expect * exp = NULL;
+       struct nf_conntrack_expect * i;
+       unsigned int h;
+
+       rcu_read_lock();
+       for (h = 0; h < nf_ct_expect_hsize; h++) {
+               hlist_for_each_entry_rcu(i, &nf_ct_expect_hash[h], hnode) {
+                       if (i->expectfn == bcm_nat_expect &&
+                           net_eq(nf_ct_net(i->master), nf_ct_net(ct)) &&
+                           nf_ct_zone_equal_any(i->master, nf_ct_zone(ct)) &&
+                           i->tuple.dst.u3.ip == external_ip &&
+                           nf_inet_addr_cmp(&i->saved_addr, &tp->src.u3) &&
+                           i->saved_proto.all == tp->src.u.all &&
+                           i->tuple.dst.protonum == tp->dst.protonum &&
+                           i->tuple.src.u3.ip == 0 &&
+                           i->tuple.src.u.udp.port == 0) {
+                               exp = i;
+                               break;
+                       }
+               }
+       }
+       rcu_read_unlock();
+
+       return exp;
+}
+
+
+unsigned int
+nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
+		       const struct nf_nat_range2 *range,
+		       const struct net_device *out)
+{
+	struct nf_conn *ct;
+	struct nf_conn_nat *nat;
+	enum ip_conntrack_info ctinfo;
+	struct nf_nat_range2 newrange;
+	const struct rtable *rt;
+	__be32 newsrc, nh;
+
+	WARN_ON(hooknum != NF_INET_POST_ROUTING);
+
+	ct = nf_ct_get(skb, &ctinfo);
+
+	WARN_ON(!(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
+			 ctinfo == IP_CT_RELATED_REPLY)));
+
+	/* Source address is 0.0.0.0 - locally generated packet that is
+	 * probably not supposed to be masqueraded.
+	 */
+	if (ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip == 0)
+		return NF_ACCEPT;
+
+	rt = skb_rtable(skb);
+	nh = rt_nexthop(rt, ip_hdr(skb)->daddr);
+	newsrc = inet_select_addr(out, nh, RT_SCOPE_UNIVERSE);
+	if (!newsrc) {
+		pr_info("%s ate my IP address\n", out->name);
+		return NF_DROP;
+	}
+
+	nat = nf_ct_nat_ext_add(ct);
+	if (nat)
+		nat->masq_index = out->ifindex;
+
+/* RFC 4787 - 4.2.2.  Port Parity
+   i.e., an even port will be mapped to an even port, and an odd port will be mapped to an odd port.*/
+
+#define CHECK_PORT_PARITY(a, b) ((a%2)==(b%2))
+       if (READ_ONCE(lg6851f_nat_mode) == 1
+           && (nfct_help(ct) == NULL || rcu_access_pointer(nfct_help(ct)->helper) == NULL)
+           && nf_ct_protonum(ct) == IPPROTO_UDP) {
+               unsigned int ret;
+               u_int16_t minport;
+               u_int16_t maxport;
+               struct nf_conntrack_expect *exp;
+
+
+               /* Choose port */
+               spin_lock_bh(&nf_conntrack_expect_lock);
+               /* Look for existing expectation */
+               exp = find_fullcone_exp(ct, newsrc);
+               if (exp) {
+                       minport = maxport = exp->tuple.dst.u.udp.port;
+
+               } else { /* no previous expect */
+                       u32 newport, tmpport, orgport;
+                       bool found_port = false;
+
+                       minport = range->min_proto.all == 0?
+                               ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.
+                               u.udp.port : range->min_proto.all;
+                       maxport = range->max_proto.all == 0?
+                               htons(65535) : range->max_proto.all;
+                        orgport = ntohs(minport);
+                       for (newport = ntohs(minport),tmpport = ntohs(maxport);
+                            newport <= tmpport; newport++) {
+                               if (CHECK_PORT_PARITY(orgport, newport) && !find_exp(newsrc, htons(newport), ct)) {
+
+                                       minport = maxport = htons(newport);
+                                       found_port = true;
+                                       break;
+                               }
+                       }
+                       if (!found_port) {
+                               spin_unlock_bh(&nf_conntrack_expect_lock);
+                               return NF_DROP;
+                       }
+               }
+               spin_unlock_bh(&nf_conntrack_expect_lock);
+
+
+       memset(&newrange.min_addr, 0, sizeof(newrange.min_addr));
+       memset(&newrange.max_addr, 0, sizeof(newrange.max_addr));
+
+               newrange.flags = range->flags | NF_NAT_RANGE_MAP_IPS |
+                       NF_NAT_RANGE_PROTO_SPECIFIED;
+               newrange.max_addr.ip = newrange.min_addr.ip = newsrc;
+               newrange.min_proto.udp.port = newrange.max_proto.udp.port = minport;
+
+               /* Set ct helper */
+               ret = nf_nat_setup_info(ct, &newrange, NF_NAT_MANIP_SRC);
+               if (ret == NF_ACCEPT) {
+                       struct nf_conn_help *help = nfct_help(ct);
+                       if (help == NULL)
+                               help = nf_ct_helper_ext_add(ct, GFP_ATOMIC);
+                       if (help != NULL) {
+                               help->helper = &nf_conntrack_helper_bcm_nat;
+
+                       }
+               }
+               return ret;
+       }
+
+	/* Transfer from original range. */
+	memset(&newrange.min_addr, 0, sizeof(newrange.min_addr));
+	memset(&newrange.max_addr, 0, sizeof(newrange.max_addr));
+	newrange.flags       = range->flags | NF_NAT_RANGE_MAP_IPS;
+	if (READ_ONCE(lg6851f_nat_mode) == 2)
+		newrange.flags |= NF_NAT_RANGE_PROTO_RANDOM_FULLY;
+	newrange.min_addr.ip = newsrc;
+	newrange.max_addr.ip = newsrc;
+	newrange.min_proto   = range->min_proto;
+	newrange.max_proto   = range->max_proto;
+
+	/* Hand modified range to generic setup. */
+	return nf_nat_setup_info(ct, &newrange, NF_NAT_MANIP_SRC);
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv4);
+
+static void iterate_cleanup_work(struct work_struct *work)
+{
+	struct nf_ct_iter_data iter_data = {};
+	struct masq_dev_work *w;
+
+	w = container_of(work, struct masq_dev_work, work);
+
+	iter_data.net = w->net;
+	iter_data.data = (void *)w;
+	nf_ct_iterate_cleanup_net(w->iter, &iter_data);
+
+	put_net_track(w->net, &w->ns_tracker);
+	kfree(w);
+	atomic_dec(&masq_worker_count);
+	module_put(THIS_MODULE);
+}
+
+/* Iterate conntrack table in the background and remove conntrack entries
+ * that use the device/address being removed.
+ *
+ * In case too many work items have been queued already or memory allocation
+ * fails iteration is skipped, conntrack entries will time out eventually.
+ */
+static void nf_nat_masq_schedule(struct net *net, union nf_inet_addr *addr,
+				 int ifindex,
+				 int (*iter)(struct nf_conn *i, void *data),
+				 gfp_t gfp_flags)
+{
+	struct masq_dev_work *w;
+
+	if (atomic_read(&masq_worker_count) > MAX_MASQ_WORKER_COUNT)
+		return;
+
+	net = maybe_get_net(net);
+	if (!net)
+		return;
+
+	if (!try_module_get(THIS_MODULE))
+		goto err_module;
+
+	w = kzalloc(sizeof(*w), gfp_flags);
+	if (w) {
+		/* We can overshoot MAX_MASQ_WORKER_COUNT, no big deal */
+		atomic_inc(&masq_worker_count);
+
+		INIT_WORK(&w->work, iterate_cleanup_work);
+		w->ifindex = ifindex;
+		w->net = net;
+		netns_tracker_alloc(net, &w->ns_tracker, gfp_flags);
+		w->iter = iter;
+		if (addr)
+			w->addr = *addr;
+		schedule_work(&w->work);
+		return;
+	}
+
+	module_put(THIS_MODULE);
+ err_module:
+	put_net(net);
+}
+
+static int device_cmp(struct nf_conn *i, void *arg)
+{
+	const struct nf_conn_nat *nat = nfct_nat(i);
+	const struct masq_dev_work *w = arg;
+
+	if (!nat)
+		return 0;
+	return nat->masq_index == w->ifindex;
+}
+
+static int masq_device_event(struct notifier_block *this,
+			     unsigned long event,
+			     void *ptr)
+{
+	const struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	struct net *net = dev_net(dev);
+
+	if (event == NETDEV_DOWN) {
+		/* Device was downed.  Search entire table for
+		 * conntracks which were associated with that device,
+		 * and forget them.
+		 */
+
+		nf_nat_masq_schedule(net, NULL, dev->ifindex,
+				     device_cmp, GFP_KERNEL);
+	}
+
+	return NOTIFY_DONE;
+}
+
+static int inet_cmp(struct nf_conn *ct, void *ptr)
+{
+	struct nf_conntrack_tuple *tuple;
+	struct masq_dev_work *w = ptr;
+
+	if (!device_cmp(ct, ptr))
+		return 0;
+
+	tuple = &ct->tuplehash[IP_CT_DIR_REPLY].tuple;
+
+	return nf_inet_addr_cmp(&w->addr, &tuple->dst.u3);
+}
+
+static int masq_inet_event(struct notifier_block *this,
+			   unsigned long event,
+			   void *ptr)
+{
+	const struct in_ifaddr *ifa = ptr;
+	const struct in_device *idev;
+	const struct net_device *dev;
+	union nf_inet_addr addr;
+
+	if (event != NETDEV_DOWN)
+		return NOTIFY_DONE;
+
+	/* The masq_dev_notifier will catch the case of the device going
+	 * down.  So if the inetdev is dead and being destroyed we have
+	 * no work to do.  Otherwise this is an individual address removal
+	 * and we have to perform the flush.
+	 */
+	idev = ifa->ifa_dev;
+	if (idev->dead)
+		return NOTIFY_DONE;
+
+	memset(&addr, 0, sizeof(addr));
+
+	addr.ip = ifa->ifa_address;
+
+	dev = idev->dev;
+	nf_nat_masq_schedule(dev_net(idev->dev), &addr, dev->ifindex,
+			     inet_cmp, GFP_KERNEL);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block masq_dev_notifier = {
+	.notifier_call	= masq_device_event,
+};
+
+static struct notifier_block masq_inet_notifier = {
+	.notifier_call	= masq_inet_event,
+};
+
+#if IS_ENABLED(CONFIG_IPV6)
+static int
+nat_ipv6_dev_get_saddr(struct net *net, const struct net_device *dev,
+		       const struct in6_addr *daddr, unsigned int srcprefs,
+		       struct in6_addr *saddr)
+{
+#ifdef CONFIG_IPV6_MODULE
+	const struct nf_ipv6_ops *v6_ops = nf_get_ipv6_ops();
+
+	if (!v6_ops)
+		return -EHOSTUNREACH;
+
+	return v6_ops->dev_get_saddr(net, dev, daddr, srcprefs, saddr);
+#else
+	return ipv6_dev_get_saddr(net, dev, daddr, srcprefs, saddr);
+#endif
+}
+
+unsigned int
+nf_nat_masquerade_ipv6(struct sk_buff *skb, const struct nf_nat_range2 *range,
+		       const struct net_device *out)
+{
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn_nat *nat;
+	struct in6_addr src;
+	struct nf_conn *ct;
+	struct nf_nat_range2 newrange;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	WARN_ON(!(ct && (ctinfo == IP_CT_NEW || ctinfo == IP_CT_RELATED ||
+			 ctinfo == IP_CT_RELATED_REPLY)));
+
+	if (nat_ipv6_dev_get_saddr(nf_ct_net(ct), out,
+				   &ipv6_hdr(skb)->daddr, 0, &src) < 0)
+		return NF_DROP;
+
+	nat = nf_ct_nat_ext_add(ct);
+	if (nat)
+		nat->masq_index = out->ifindex;
+
+	newrange.flags		= range->flags | NF_NAT_RANGE_MAP_IPS;
+	newrange.min_addr.in6	= src;
+	newrange.max_addr.in6	= src;
+	newrange.min_proto	= range->min_proto;
+	newrange.max_proto	= range->max_proto;
+
+	return nf_nat_setup_info(ct, &newrange, NF_NAT_MANIP_SRC);
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv6);
+
+/* atomic notifier; can't call nf_ct_iterate_cleanup_net (it can sleep).
+ *
+ * Defer it to the system workqueue.
+ *
+ * As we can have 'a lot' of inet_events (depending on amount of ipv6
+ * addresses being deleted), we also need to limit work item queue.
+ */
+static int masq_inet6_event(struct notifier_block *this,
+			    unsigned long event, void *ptr)
+{
+	struct inet6_ifaddr *ifa = ptr;
+	const struct net_device *dev;
+	union nf_inet_addr addr;
+
+	if (event != NETDEV_DOWN)
+		return NOTIFY_DONE;
+
+	dev = ifa->idev->dev;
+
+	memset(&addr, 0, sizeof(addr));
+
+	addr.in6 = ifa->addr;
+
+	nf_nat_masq_schedule(dev_net(dev), &addr, dev->ifindex, inet_cmp,
+			     GFP_ATOMIC);
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block masq_inet6_notifier = {
+	.notifier_call	= masq_inet6_event,
+};
+
+static int nf_nat_masquerade_ipv6_register_notifier(void)
+{
+	return register_inet6addr_notifier(&masq_inet6_notifier);
+}
+#else
+static inline int nf_nat_masquerade_ipv6_register_notifier(void) { return 0; }
+#endif
+
+int nf_nat_masquerade_inet_register_notifiers(void)
+{
+	int ret = 0;
+
+	mutex_lock(&masq_mutex);
+	if (WARN_ON_ONCE(masq_refcnt == UINT_MAX)) {
+		ret = -EOVERFLOW;
+		goto out_unlock;
+	}
+
+	/* check if the notifier was already set */
+	if (++masq_refcnt > 1)
+		goto out_unlock;
+
+	ret = nf_conntrack_helper_register(&nf_conntrack_helper_bcm_nat);
+	if (ret)
+		goto err_dec;
+
+	/* Register for device down reports */
+	ret = register_netdevice_notifier(&masq_dev_notifier);
+	if (ret)
+		goto err_helper;
+	/* Register IP address change reports */
+	ret = register_inetaddr_notifier(&masq_inet_notifier);
+	if (ret)
+		goto err_unregister;
+
+	ret = nf_nat_masquerade_ipv6_register_notifier();
+	if (ret)
+		goto err_unreg_inet;
+
+	mutex_unlock(&masq_mutex);
+	return ret;
+err_unreg_inet:
+	unregister_inetaddr_notifier(&masq_inet_notifier);
+err_unregister:
+	unregister_netdevice_notifier(&masq_dev_notifier);
+err_helper:
+	nf_conntrack_helper_unregister(&nf_conntrack_helper_bcm_nat);
+err_dec:
+	masq_refcnt--;
+out_unlock:
+	mutex_unlock(&masq_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_inet_register_notifiers);
+
+void nf_nat_masquerade_inet_unregister_notifiers(void)
+{
+	mutex_lock(&masq_mutex);
+	/* check if the notifiers still have clients */
+	if (--masq_refcnt > 0)
+		goto out_unlock;
+
+	nf_conntrack_helper_unregister(&nf_conntrack_helper_bcm_nat);
+
+	unregister_netdevice_notifier(&masq_dev_notifier);
+	unregister_inetaddr_notifier(&masq_inet_notifier);
+#if IS_ENABLED(CONFIG_IPV6)
+	unregister_inet6addr_notifier(&masq_inet6_notifier);
+#endif
+out_unlock:
+	mutex_unlock(&masq_mutex);
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_inet_unregister_notifiers);

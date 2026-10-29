@@ -1,0 +1,6 @@
+#!/bin/sh /etc/rc.common
+START=99
+start() {
+ # One initial warm period; the ordinary demand-driven sampler remains the owner.
+ /usr/bin/timeout -k 2 3 ucode /usr/share/rpcd/ucode/lg6851f.wireless warm >/dev/null 2>&1 &
+}

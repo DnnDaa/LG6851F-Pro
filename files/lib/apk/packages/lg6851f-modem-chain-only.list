@@ -31,7 +31,6 @@
 /etc/init.d/ql_netd
 /etc/init.d/ql_powerd.init
 /etc/init.d/ql_ril_service
-/etc/init.d/ql_speed_monitor_mgr
 /etc/init.d/scd
 /etc/lbs/agps_profiles_conf2.xml
 /etc/lbs/cacerts_supl/24be4f53.0
@@ -105,7 +104,6 @@
 /usr/bin/ql_powerd
 /usr/bin/ql_reset_nic.sh
 /usr/bin/ql_ril_service
-/usr/bin/ql_speed_monitor_mgr
 /usr/bin/ql_vlan_pdn_map.sh
 /usr/bin/ql_wan_lan_auto_adapt.sh
 /usr/bin/ql_wwan_config.sh
@@ -127,7 +125,6 @@
 /usr/lib/libql_peripheral.so
 /usr/lib/libql_qlog.so
 /usr/lib/libql_slic.so
-/usr/lib/libql_speed_monitor.so
 /usr/lib/libql_uinf.so
 /usr/lib/libqlnet.so
 /usr/lib/libqlril.so

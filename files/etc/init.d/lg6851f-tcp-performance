@@ -3,17 +3,25 @@ START=18
 STOP=01
 
 start() {
- local modules=/lib/modules/$(uname -r)
+ local modules=/lib/modules/$(uname -r) chosen conf
+ # Availability is separate from selection. Load BBR before honoring the
+ # saved sysctl choice, including when START=11 could not find its module.
  if [ ! -d /sys/module/tcp_bbr ]; then
   modprobe tcp_bbr 2>/dev/null || {
    [ ! -f "$modules/tcp_bbr.ko" ] || insmod "$modules/tcp_bbr.ko" || return 1
   }
  fi
  sysctl -p /etc/sysctl.d/30-lg6851f-tcp-performance.conf >/dev/null || return 1
- if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control; then
-  sysctl -q -w net.ipv4.tcp_congestion_control=bbr
- else
-  logger -t lg6851f-tcp-performance 'Matching BBR module unavailable; retaining current TCP congestion control'
+ chosen=$(awk -F= '
+  /^[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*=/ {
+   v=$2;sub(/#.*/,"",v);gsub(/[[:space:]"\047]/,"",v)
+  } END{print v}' /etc/sysctl.d/*.conf /etc/sysctl.conf)
+ case "$chosen" in '') return 0;; *[!a-zA-Z0-9_]*) return 1;; esac
+ grep -qw "$chosen" /proc/sys/net/ipv4/tcp_available_congestion_control || {
+  logger -t lg6851f-tcp-performance "Configured TCP algorithm unavailable: $chosen"
   return 1
- fi
+ }
+ sysctl -q -w "net.ipv4.tcp_congestion_control=$chosen"
 }
+
+reload() { start; }

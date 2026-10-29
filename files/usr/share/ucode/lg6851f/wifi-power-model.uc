@@ -23,10 +23,10 @@ const CATEGORIES = [
 export function spec(radio) {
  let ids, iface, band, reference;
  if (radio == 'radio0') {
-  ids=[0,1,2,3,8,9,10,11,12,15,16,17,18,19];
+  ids=[0,1,2,3,8,9,10,11,12,15,16,17,18,19,23,24];
   iface='ra0';band=0;reference='CCK_01M';
  } else if (radio == 'radio1') {
-  ids=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21];
+  ids=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,23,24,25,26,27];
   iface='rai0';band=1;reference='OFDM_06M';
  } else die('Invalid radio');
  return {radio:radio,iface:iface,channel_band:band,reference:reference,
@@ -39,10 +39,25 @@ export function requested(value) {
  return +value;
 }
 
+// Configuration identity must not include handler_data (e.g. the previous
+// phy), object insertion order or a power tier. Do not mutate caller data.
+function canonical(value) {
+ if(type(value)=='array')return map(value,canonical);
+ if(type(value)!='object')return value;
+ let out={};for(let key in sort(keys(value)))out[key]=canonical(value[key]);return out;
+}
 export function fingerprint(data) {
- if(type(data)!='object' || type(data.config)!='object')die('Invalid wireless configuration');
- delete data.config.txpower;
- return sprintf('%J',data);
+ if(type(data)!='object'||type(data.config)!='object'||type(data.interfaces)!='object')die('Invalid wireless configuration');
+ let cfg={...data.config},interfaces={};
+ delete cfg.txpower;delete cfg.vendor_power_boost;delete cfg.vendor_power_level;
+ // The LuCI form writes these effective defaults on its first save.
+ if(cfg.beacon_int==100)delete cfg.beacon_int;
+ if(cfg.cell_density==0)delete cfg.cell_density;
+ for(let name,iface in data.interfaces) {
+  let item={...iface};delete item.data;
+  interfaces[name]=item;
+ }
+ return sprintf('%J',canonical({config:cfg,interfaces:interfaces}));
 }
 
 // printk timestamps and /proc/uptime may use different clock domains.
@@ -146,9 +161,21 @@ export function validate_snapshot(s,snapshot) {
  return snapshot;
 }
 
-export function plan(s,snapshot,defaults,target) {
+// Custom gain is separate from the unchanged board factory profile.
+// Raw power and compensation units follow the existing half-dB firmware API.
+export function plan(s,snapshot,defaults,target,custom) {
  validate_snapshot(s,snapshot);target=requested(target);
- let peak=-128, factory={}, before={}, planned={}, keys={}, clipped=0, preserved=0;
+ let gain=[];
+ if(custom!=null && custom.enabled===true) {
+  if(custom.version!=1 || custom.scope!='supported_ht_vht_he_eht' || type(custom.gain_db)!='array' || length(custom.gain_db)!=16)
+   die('Invalid custom MCS power profile');
+  for(let v in custom.gain_db) {
+   if(type(v)!='int' || v<0 || v>6)die('Invalid MCS gain');
+   push(gain,v*2);
+  }
+  if(gain[14]!=0 || gain[15]!=0)die('EHT MCS14/15 must retain their factory targets');
+ }
+ let factory_peak=-128,peak=-128,factory={},profile={},before={},planned={},keys={},clipped=0,preserved=0;
  for(let c in s.categories) {
   before[c.name]=[];
   for(let i=0;i<c.size;i++) {
@@ -156,26 +183,24 @@ export function plan(s,snapshot,defaults,target) {
    push(before[c.name],snapshot.offsets.values[c.name][i]);
    if(v==126 || v==127 || v==-128)continue;
    let baseline=v-snapshot.offsets.values[c.name][i],f=baseline+defaults[c.name][i];
-   if(f < -127 || f > 125)die('Factory rate target outside supported range');
-   factory[key]=f;keys[key]={category:c.name,index:i,baseline:baseline};
-   if(f>peak)peak=f;
+   let extra=c.id>=2 && !(c.id==3 && i==8)?(gain[i]??0):0,wanted=f+extra;
+   if(f < -127 || f > 125 || wanted < -127 || wanted > 125)die('Rate target outside supported range');
+   factory[key]=f;profile[key]=wanted;keys[key]={category:c.name,index:i,baseline:baseline};
+   if(f>factory_peak)factory_peak=f;if(wanted>peak)peak=wanted;
   }
  }
  if(peak==-128)die('Factory power baseline unavailable');
- // mt76-style RATE limiting: each rate is independently bounded.
- // The board-specific factory target is our available per-rate limit.
- // Do not import mt76 chain corrections into this vendor firmware API.
- let delta=target==null || target*2>=peak?0:target*2-peak;
+ let effective_peak=-128;
  for(let c in s.categories) {
   planned[c.name]=[];
   for(let i=0;i<c.size;i++) {
    let key=key_for(c,i),v=defaults[c.name][i];
    if(keys[key]!=null) {
-    let limited=target==null?factory[key]:min(factory[key],target*2);
+    let limited=target==null?profile[key]:min(profile[key],target*2);
     v=limited-keys[key].baseline;
-    if(limited<factory[key])clipped++;else preserved++;
+    if(limited<profile[key])clipped++;else preserved++;
+    if(limited>effective_peak)effective_peak=limited;
    }
-   // Unsupported/sentinel rates retain their original profile offset.
    if(v < -63 || v > 63)die('Requested rate limit exceeds compensation range');
    push(planned[c.name],v);
   }
@@ -185,7 +210,10 @@ export function plan(s,snapshot,defaults,target) {
   if(value < -127 || value > 125)die('Predicted firmware power is outside the supported range');
   expected[key]=value;
  }
- return {target:target,delta:delta,factory_peak:peak,effective_peak:peak+delta,calibration_limited:target!=null && target*2>peak,factory:factory,clipped_rates:clipped,preserved_rates:preserved,before:before,values:planned,expected:expected};
+ return {target:target,delta:effective_peak-peak,factory_peak:factory_peak,profile_peak:peak,effective_peak:effective_peak,
+  calibration_limited:target!=null && target*2>peak,factory:factory,profile:profile,
+  custom_gain_db:map(gain,v=>v/2.0),custom_enabled:length(gain)>0,custom_level:custom?.level??0,
+  clipped_rates:clipped,preserved_rates:preserved,before:before,values:planned,expected:expected};
 }
 
 export function verify(s,snapshot,p) {
@@ -206,22 +234,23 @@ export function summary(s,snapshot) {
  return {reference_dbm:snapshot.power.rates[s.reference]/2.0,minimum_dbm:low/2.0,maximum_dbm:high/2.0,rate_entries:count,firmware_band:snapshot.power.band};
 }
 
-// Compact readback for the active SU bandwidth. No synthetic NSS power values.
+// One existing snapshot provides all supported protocol/bandwidth tables.
+// No additional firmware commands or synthesized per-NSS power values.
 export function mcs_tables(s,snapshot,p,htmode) {
- let m=match(htmode??'',/^(HT|VHT|HE|EHT)(20|40|80|160)$/);
- if(!m)return [];
- let bw=+m[2],suffix=({'20':'242','40':'484','80':'996','160':'996X2'})[''+bw],out=[];
- for(let family in ['HE','EHT']) {
-  let prefix=family+suffix,c=null;
-  for(let item in s.categories)if(item.prefix==prefix)c=item;
-  if(c==null)continue;
-  let live=[],factory=[];
+ let out=[],su={'242':'20','484':'40','996':'80','996X2':'160'};
+ for(let c in s.categories) {
+  if(c.id<2)continue;
+  let mode=c.prefix,m=match(c.prefix,/^(HE|EHT)(242|484|996|996X2)$/);
+  if(m)mode=m[1]+su[m[2]];
+  let live=[],factory=[],targets=[],indices=[];
   for(let i=0;i<c.size;i++) {
    let key=key_for(c,i),v=snapshot.power.rates[key];
+   push(indices,c.id==3 && i==8?32:i);
    push(live,p.factory[key]==null?null:v/2.0);
    push(factory,p.factory[key]==null?null:p.factory[key]/2.0);
+   push(targets,p.expected[key]==null?null:p.expected[key]/2.0);
   }
-  push(out,{mode:family+bw,values_dbm:live,factory_limits_dbm:factory});
+  push(out,{mode:mode,mcs_indices:indices,values_dbm:live,factory_limits_dbm:factory,target_values_dbm:targets});
  }
  return out;
 }

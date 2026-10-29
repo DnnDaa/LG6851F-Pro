@@ -4,7 +4,7 @@
     "order": 5,
     "action": {
       "type": "view",
-      "path": "fiberhome/home_v20261016_5"
+      "path": "fiberhome/home_stable_v20261026_71"
     },
     "depends": {
       "acl": [

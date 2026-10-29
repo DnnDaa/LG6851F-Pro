@@ -1,1 +1,1 @@
-hwnat
+hwnat cpu_wifi_accel=1 mib_stats_interval_ms=2000

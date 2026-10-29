@@ -1,0 +1,166 @@
+#!/bin/sh /etc/rc.common
+
+START=19
+USE_PROCD=0
+
+changed_wireless=0
+changed_network=0
+changed_firewall=0
+uplinks=
+
+backup_configs() {
+	local stamp dir=/data/lg6851f-config-backup
+
+	[ -d /data ] || return 0
+	mkdir -p "$dir" || return 0
+	stamp=$(date +%Y%m%d-%H%M%S)
+	cp -p /etc/config/wireless "$dir/wireless.before-sta-uplink-$stamp" 2>/dev/null || true
+	cp -p /etc/config/network "$dir/network.before-sta-uplink-$stamp" 2>/dev/null || true
+	cp -p /etc/config/firewall "$dir/firewall.before-sta-uplink-$stamp" 2>/dev/null || true
+}
+
+safe_name() {
+	case "$1" in
+		''|lan|*[!A-Za-z0-9_]*) return 1 ;;
+	esac
+	return 0
+}
+
+ensure_uplink() {
+	local name="$1"
+
+	safe_name "$name" || return 1
+	if [ "$(uci -q get "network.$name")" != interface ]; then
+		uci set "network.$name=interface"
+		changed_network=1
+	fi
+	if [ "$(uci -q get "network.$name.proto")" != dhcp ]; then
+		uci set "network.$name.proto=dhcp"
+		changed_network=1
+	fi
+	if [ -z "$(uci -q get "network.$name.metric")" ]; then
+		uci set "network.$name.metric=20"
+		changed_network=1
+	fi
+	if [ -n "$(uci -q get "network.$name.type")" ]; then
+		uci -q delete "network.$name.type"
+		changed_network=1
+	fi
+	if [ -n "$(uci -q get "network.$name.device")" ]; then
+		uci -q delete "network.$name.device"
+		changed_network=1
+	fi
+	if [ -n "$(uci -q get "network.$name.ifname")" ]; then
+		uci -q delete "network.$name.ifname"
+		changed_network=1
+	fi
+	return 0
+}
+
+valid_uplink() {
+	local name="$1" kind proto type device ifname
+
+	safe_name "$name" || return 1
+	kind=$(uci -q get "network.$name")
+	proto=$(uci -q get "network.$name.proto")
+	type=$(uci -q get "network.$name.type")
+	device=$(uci -q get "network.$name.device")
+	ifname=$(uci -q get "network.$name.ifname")
+	[ "$kind" = interface ] && [ "$proto" = dhcp ] || return 1
+	[ "$type" != bridge ] || return 1
+	[ -z "$device" ] && [ -z "$ifname" ] || return 1
+	return 0
+}
+
+remove_stale_uplink() {
+	local name=wwan device
+
+	device=$(uci -q get "network.$name.device")
+	case "$device" in
+		radio*.network*) ;;
+		*) return 0 ;;
+	esac
+	if ! uci -q show wireless | grep -q "\.network='$name'"; then
+		uci -q delete "network.$name"
+		changed_network=1
+	fi
+}
+
+migrate_iface() {
+	local section="$1" mode radio disabled network count candidate default_uplink
+
+	config_get mode "$section" mode
+	[ "$mode" = sta ] || return 0
+	config_get_bool disabled "$section" disabled 0
+	[ "$disabled" = 0 ] || return 0
+	config_get radio "$section" device
+	case "$radio" in
+		radio0) default_uplink=wwan0 ;;
+		radio1) default_uplink=wwan1 ;;
+		*) return 0 ;;
+	esac
+
+	config_get network "$section" network
+	set -- $network
+	count=$#
+	candidate=
+	[ "$count" = 1 ] && candidate="$1"
+	if ! valid_uplink "$candidate"; then candidate="$default_uplink"; fi
+	ensure_uplink "$candidate" || return 0
+
+	if [ "$network" != "$candidate" ]; then
+		uci set "wireless.$section.network=$candidate"
+		changed_wireless=1
+	fi
+	case " $uplinks " in
+		*" $candidate "*) ;;
+		*) uplinks="$uplinks $candidate" ;;
+	esac
+}
+
+add_wan_network() {
+	local zone="$1" zone_name current desired
+
+	config_get zone_name "$zone" name
+	[ "$zone_name" = wan ] || return 0
+	for desired in $uplinks; do
+		current=$(uci -q get "firewall.$zone.network")
+		case " $current " in
+			*" $desired "*) ;;
+			*)
+				uci -q add_list "firewall.$zone.network=$desired"
+				changed_firewall=1
+			;;
+		esac
+	done
+}
+
+migrate() {
+	. /lib/functions.sh
+	# Keep both managed-client uplinks available so the wireless page never has
+	# to add or delete a network while applying a Wi-Fi change.
+	ensure_uplink wwan0
+	ensure_uplink wwan1
+	uplinks=" wwan0 wwan1"
+	config_load wireless
+	config_foreach migrate_iface wifi-iface
+	remove_stale_uplink
+	config_load firewall
+	config_foreach add_wan_network zone
+
+	if [ "$changed_wireless" = 1 ] || [ "$changed_network" = 1 ] || [ "$changed_firewall" = 1 ]; then
+		backup_configs
+		uci -q commit wireless
+		uci -q commit network
+		uci -q commit firewall
+		logger -t lg6851f-sta-uplink "migrated managed-client uplink(s):$uplinks"
+	fi
+}
+
+start() {
+	migrate
+}
+
+boot() {
+	migrate
+}

@@ -1,0 +1,8 @@
+#!/usr/bin/env ucode
+// Cache-only RPC; all serialized driver work runs in a bounded child process.
+'use strict';
+import * as W from '/usr/share/ucode/lg6851f/wireless-shared.uc';
+function arg(){try{return (ARGV??[])[0];}catch(e){return null;}}
+if(arg()=='collect'){exit(W.collect_publish());}
+if(arg()=='warm'){W.status();return null;}
+return {'lg6851f.wireless':{status:{call:function(){return W.status();}}}};

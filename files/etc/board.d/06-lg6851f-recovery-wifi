@@ -1,9 +1,9 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-2.0-only
 . /lib/functions/uci-defaults.sh
 board_config_update
 ucidef_set_country CN
-# Public wireless profiles are supplied in /etc/config/wireless and receive
-# random keys at first boot. Never inject a shared root password via board.json.
+key="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')"
+[ "${#key}" = 32 ] || exit 1
+ucidef_set_wireless all LG6851F-Pro psk2 "$key"
 board_config_flush
 exit 0

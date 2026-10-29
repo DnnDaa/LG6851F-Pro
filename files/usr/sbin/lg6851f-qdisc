@@ -1,0 +1,120 @@
+#!/bin/sh
+# Queue policy is independent of HNAT/WED and TCP congestion control.
+# Only kernel defaults and our reserved a1xx handles are managed.
+case "${1:-}" in
+ '') devices=; for node in /sys/class/net/*; do
+  dev=${node##*/}
+  case "$dev" in eth0|eth1|ccmni*) devices="$devices $dev";;
+   *) [ ! -e "$node/phy80211" ] || devices="$devices $dev";; esac
+ done;;
+ --interface)
+  [ "$#" = 2 ] || exit 2
+  case "$2" in ''|*[!A-Za-z0-9_.:-]*) exit 2;; esac
+  devices="$2";;
+ *) exit 2;;
+esac
+if [ "${LG6851F_QDISC_LOCKED:-}" != 1 ]; then
+ exec 9>/var/lock/lg6851f-qdisc.lock
+ export LG6851F_QDISC_LOCKED=1
+ exec timeout 15 flock -x 9 "$0" "$@"
+fi
+policy=$(cat /proc/sys/net/core/default_qdisc) || exit 1
+case "$policy" in cake|fq|fq_codel) ;; *) exit 0;; esac
+tc=$(command -v tc)
+[ -n "$tc" ] || tc=/usr/libexec/tc-full
+[ -x "$tc" ] || exit 1
+if [ ! -d "/sys/module/sch_$policy" ]; then
+ modprobe "sch_$policy" 2>/dev/null || insmod "/lib/modules/$(uname -r)/sch_$policy.ko" || exit 1
+fi
+result=0
+apply_leaf() {
+ local parent="$1" kind="$2" handle="$3" line="$4" leaf_policy="$5" minor owned=0 token matched
+ case "$handle" in
+  0:) owned=1;;
+  a1[0-9a-f][0-9a-f]:) owned=1;;
+  101:) [ "$dev:$parent:$kind" != eth0:100:1:fq ] || owned=1;;
+ esac
+ [ "$owned" = 1 ] || return 0
+ case "$kind" in cake|fq|fq_codel|pfifo|pfifo_fast) ;; *) return 0;; esac
+ if [ "$kind" = "$leaf_policy" ]; then
+  if [ "$leaf_policy" != cake ]; then return 0; fi
+  matched=1
+  for token in unlimited besteffort triple-isolate nonat nowash no-ack-filter no-split-gso; do
+   case " $line " in *" $token "*) ;; *) matched=0;; esac
+  done
+  [ "$matched" != 1 ] || return 0
+ fi
+ if [ "$parent" = root ]; then
+  set -- root handle a100:
+ else
+  minor=${parent#*:}
+  case "$minor" in ''|*[!0-9a-fA-F]*) return 1;; esac
+  [ "${#minor}" -le 2 ] || return 1
+  handle=$(printf 'a1%02x:' "0x$minor") || return 1
+  set -- parent "$parent" handle "$handle"
+ fi
+ if [ "$leaf_policy" = cake ]; then
+  # Provider FOE metadata lives in headroom. Do not segment before the
+  # Ethernet driver's existing FPORT lifetime protection can consume it.
+  "$tc" qdisc replace dev "$dev" "$@" cake unlimited besteffort triple-isolate nonat nowash no-ack-filter no-split-gso || return 1
+ else
+  "$tc" qdisc replace dev "$dev" "$@" "$leaf_policy" || return 1
+ fi
+ local actual
+ actual=$("$tc" qdisc show dev "$dev") || return 1
+ printf '%s\n' "$actual" | awk -v p="$parent" -v k="$leaf_policy" '
+  $1=="qdisc" && $2==k {
+   for(i=4;i<=NF;i++) if((p=="root" && $i=="root") || ($i=="parent" && $(i+1)==p)) {
+    if(k!="cake" || $0 ~ /no-split-gso/) ok=1
+   }
+  } END {exit !ok}'
+}
+for dev in $devices; do
+ [ -d "/sys/class/net/$dev" ] || continue
+ dev_policy=$policy
+ case "$dev" in eth0|eth1|ccmni*) ;;
+  *)
+   [ -e "/sys/class/net/$dev/phy80211" ] || continue
+   # The vendor Wi-Fi TX path sends IPv6 MLD traffic while a new AP joins
+   # br-lan. Keep the standard queue manager there; WAN CAKE is unaffected.
+   [ "$dev_policy" != cake ] || dev_policy=fq_codel
+  ;;
+ esac
+ listing=$("$tc" qdisc show dev "$dev") || { result=1; continue; }
+ root=$(printf '%s\n' "$listing" | awk '$1=="qdisc" {for(i=4;i<=NF;i++)if($i=="root"){print $2 ":" $3;exit}}')
+ case "$root" in
+  mq:0:)
+   # mq0 cannot be addressed on this kernel. Normalize only an idle,
+   # entirely automatic hierarchy; never replace custom QoS or a busy tree.
+   printf '%s\n' "$listing" | awk '$1=="qdisc" && $2!="mq" {
+    if($3!="0:" || ($2!="fq_codel" && $2!="fq" && $2!="cake" && $2!="pfifo_fast" && $2!="pfifo"))bad=1
+    n++} END{exit bad || !n}' || continue
+   # CAKE also prints per-tin byte-only backlog rows. Only the generic
+   # bytes/packets row describes an actual queued packet count.
+   status=$("$tc" -s qdisc show dev "$dev") || { result=1; continue; }
+   printf '%s\n' "$status" | awk '$1=="backlog" && $3 ~ /^[0-9]+p$/ {
+    n++;if($2!="0b" || $3!="0p")busy=1
+   }END{exit !n || busy}' || { result=1; continue; }
+   "$tc" qdisc replace dev "$dev" root handle 100: mq || { result=1; continue; }
+   listing=$("$tc" qdisc show dev "$dev") || { result=1; continue; };;
+  mq:*) ;;
+  cake:*|fq:*|fq_codel:*|pfifo:*|pfifo_fast:*) ;;
+  *) continue;;
+ esac
+ # No pipeline subshell: propagate any per-queue error to the caller.
+ while IFS= read -r line; do
+  set -- $line
+  [ "$1" = qdisc ] || continue
+  kind=$2; handle=$3; shift 3; parent=
+  while [ "$#" -gt 0 ]; do
+   case "$1" in root) parent=root; break;; parent) parent=$2; break;; esac
+   shift
+  done
+  [ -n "$parent" ] || continue
+  [ "$kind" != mq ] || continue
+  apply_leaf "$parent" "$kind" "$handle" "$line" "$dev_policy" || result=1
+ done <<EOF
+$listing
+EOF
+done
+exit "$result"

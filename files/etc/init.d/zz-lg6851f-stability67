@@ -1,0 +1,52 @@
+#!/bin/sh /etc/rc.common
+START=19
+USE_PROCD=0
+
+pin_bridge() {
+ local section="$1" name mac ports port octet candidates= factory
+ config_get name "$section" name
+ [ "$name" = br-lan ] || return 0
+ [ "$(uci -q get network.lan.device)" = br-lan ] || return 0
+ config_get mac "$section" macaddr
+ [ -z "$mac" ] || return 0
+ [ -z "$(uci -q get network.lan.macaddr)" ] || return 0
+ config_get ports "$section" ports
+ # Preserve the MAC the bridge previously inherited from primary 2.4 GHz.
+ # This validated active EEPROM is prepared by S090. Read MAC bytes only.
+ factory=/lib/firmware/mediatek/mt7996/mt7996_eeprom_mt6990.bin
+ if [ -r "$factory" ] && [ "$(wc -c < "$factory")" = 7680 ] &&
+    [ "$(hexdump -v -n 2 -e '2/1 "%02x"' "$factory")" = 9079 ]; then
+  . /lib/functions/system.sh
+  candidates=$(get_mac_binary "$factory" 4)
+ fi
+ for port in $ports eth0 eth1; do
+  case "$port" in eth0|eth1) ;; *) continue;; esac
+  [ -r "/sys/class/net/$port/address" ] || continue
+  read -r mac <"/sys/class/net/$port/address" || continue
+  candidates="$candidates $mac"
+ done
+ for mac in $candidates; do
+  printf '%s\n' "$mac" | grep -Eq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || continue
+  case "$mac" in 00:00:00:00:00:00|20:08:02:00:00:00) continue;; esac
+  octet=${mac%%:*};[ $((0x$octet & 1)) = 0 ] || continue
+  # Set once before S20network, while no live bridge/neighbour queue exists.
+  umask 077
+  mkdir -p /data/lg6851f-config-backup || return 1
+  cp -p /etc/config/network "/data/lg6851f-config-backup/network.before-bridge67-$(date +%Y%m%d-%H%M%S)" || return 1
+  uci set "network.$section.macaddr=$mac" || return 1
+  uci commit network || return 1
+  logger -t lg6851f-stability67 'LAN bridge identity fixed before wireless initialization'
+  return 0
+ done
+ # A failed storage/MAC read must not invent an address or alter calibration.
+ return 0
+}
+start() {
+ . /lib/functions.sh
+ config_load network
+ config_foreach pin_bridge device
+ # This new startup entry also repairs upgrades that retained a whiteout for
+ # the old S19 STA wrapper. No network reload is needed before S20network.
+ /etc/init.d/lg6851f-sta-uplink start
+}
+boot() { start; }

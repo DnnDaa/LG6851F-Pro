@@ -1,0 +1,19 @@
+{
+  "version": "V2.10",
+  "sha256": {
+    "public-b-assembled-root.tar": "ec8c417f0c829355644aa4b8aec593d05bd755e62a8eaed4272f58573e961f15",
+    "public-b-rootfs.squashfs": "0a86ac38b64f53b4bb88c233f58973fd26d0965c879d94626397e18052205140",
+    "boot_a.img": "19c260a01c96786c7d3809db4befe1d1791efe6d9054c18c46b52b12839ea450",
+    "boot_b.img": "9d179062704a5d651792d7e0490322e3aa5bc0413f1c194829d728c99e52bcdf",
+    "scatter-b.xml": "638b14d0ebe5864ec7cc2ab703e07c656209fee591be0a0aed1eb5f6df03889a",
+    "public-a-rootfs.squashfs": "17f39c5d9cf78cc8459781c1bf60cfad2e0d3998407c7e06a57bebf82d6dc946",
+    "connsys_gnss.img": "633a1e2a19593d9cf12db4e140d893da9d1817c721381848831d90afc0b02463",
+    "scatter-a.xml": "5ff01b20f42201315f494da8f1a8d0b7744b6cf4d0c239cc2a2b8df94ccd5cbe",
+    "download_agent-b/flash.xsd": "2834de6fb4ec7d12262c648c0f9088a1f9673c14dcf5d146445519519d6d09f7",
+    "download_agent-b/DA_BR.bin": "37e750237ffa3a2af827d3c0544bf2b071d548fc45a0b256cf21b9f57de5a0bf",
+    "download_agent-b/flash.xml": "f71b62f80f343637cbdfdfae1a24b0cb867d0f27e0ea556a4a317944d9f1ba47",
+    "download_agent-a/flash.xsd": "2834de6fb4ec7d12262c648c0f9088a1f9673c14dcf5d146445519519d6d09f7",
+    "download_agent-a/DA_BR.bin": "37e750237ffa3a2af827d3c0544bf2b071d548fc45a0b256cf21b9f57de5a0bf",
+    "download_agent-a/flash.xml": "fdd33f58368172bc7516fe365bfaaab011758b0179af010b68de5a8858a0a8a0"
+  }
+}

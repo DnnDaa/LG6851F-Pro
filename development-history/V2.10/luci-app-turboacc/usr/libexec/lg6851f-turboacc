@@ -1,0 +1,75 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Shared sources of truth: firewall UCI and /etc/sysctl.conf. No daemon.
+set -eu
+[ "${1:-}" = apply ] && [ "$#" = 5 ] || exit 2
+sw=$2; hw=$3; cc=$4; qdisc=$5
+case "$sw:$hw" in 0:0|1:0|1:1) ;; *) echo '流量分载参数无效'; exit 2;; esac
+case "$cc" in reno|cubic|bbr) ;; *) echo 'TCP 算法无效'; exit 2;; esac
+case "$qdisc" in cake|fq|fq_codel) ;; *) echo '队列算法无效'; exit 2;; esac
+if [ "${LG6851F_TURBOACC_LOCKED:-}" != 1 ]; then
+ export LG6851F_TURBOACC_LOCKED=1
+ exec timeout 25 flock -n /var/lock/lg6851f-turboacc.lock "$0" "$@"
+fi
+[ -x /lib/netifd/wireless/vendor618.sh ] || { echo '设备不支持'; exit 1; }
+[ "$hw" != 1 ] || [ -d /sys/module/hwnat ] || { echo 'HNAT 驱动未运行'; exit 1; }
+grep -qw "$cc" /proc/sys/net/ipv4/tcp_available_congestion_control || { echo 'TCP 算法不可用'; exit 1; }
+[ -d "/sys/module/sch_$qdisc" ] || [ -f "/lib/modules/$(uname -r)/sch_$qdisc.ko" ] || { echo '队列模块不可用'; exit 1; }
+[ -z "$(uci -q changes firewall)" ] || { echo '防火墙有未提交修改，请先保存或撤销'; exit 1; }
+oldsw=$(uci -q get 'firewall.@defaults[0].flow_offloading' || echo 0)
+oldhw=$(uci -q get 'firewall.@defaults[0].flow_offloading_hw' || echo 0)
+oldcc=$(cat /proc/sys/net/ipv4/tcp_congestion_control)
+oldq=$(cat /proc/sys/net/core/default_qdisc)
+# Do not restart services or rewrite flash for an unchanged selection.
+if [ "$sw:$hw:$cc:$qdisc" = "$oldsw:$oldhw:$oldcc:$oldq" ]; then
+ echo '当前设置已生效，无需重载'; exit 0
+fi
+work=$(mktemp -d /tmp/lg6851f-turboacc.XXXXXX)
+chmod 700 "$work"
+cp -p /etc/config/firewall "$work/firewall"
+cp -p /etc/sysctl.conf "$work/sysctl.conf"
+changed_firewall=0; changed_qdisc=0; committed=0
+cleanup() {
+ result=$?
+ trap - EXIT HUP INT TERM
+ if [ "$committed" != 1 ]; then
+  cp -p "$work/sysctl.conf" /etc/sysctl.conf
+  uci -q revert firewall || true
+  cp -p "$work/firewall" /etc/config/firewall
+  sysctl -q -w "net.ipv4.tcp_congestion_control=$oldcc" "net.core.default_qdisc=$oldq" || true
+  [ "$changed_qdisc" = 0 ] || /usr/sbin/lg6851f-qdisc >/dev/null 2>&1 || true
+  [ "$changed_firewall" = 0 ] || /etc/init.d/firewall reload >/dev/null 2>&1 || true
+ fi
+ rm -f /etc/sysctl.conf.turboacc-new
+ rm -f "$work/firewall" "$work/sysctl.conf"
+ rmdir "$work"
+ exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+awk -v cc="$cc" -v q="$qdisc" '
+ /^[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*=/ {next}
+ /^[[:space:]]*net\.core\.default_qdisc[[:space:]]*=/ {next}
+ {print} END {print "net.ipv4.tcp_congestion_control=" cc;print "net.core.default_qdisc=" q}
+' /etc/sysctl.conf >/etc/sysctl.conf.turboacc-new
+chmod 644 /etc/sysctl.conf.turboacc-new
+mv /etc/sysctl.conf.turboacc-new /etc/sysctl.conf
+if [ "$sw:$hw" != "$oldsw:$oldhw" ]; then
+ uci set "firewall.@defaults[0].flow_offloading=$sw"
+ uci set "firewall.@defaults[0].flow_offloading_hw=$hw"
+ fw4 check >/dev/null
+ uci commit firewall
+ changed_firewall=1
+ /etc/init.d/firewall reload
+fi
+sysctl -q -w "net.ipv4.tcp_congestion_control=$cc" "net.core.default_qdisc=$qdisc"
+if [ "$qdisc" != "$oldq" ]; then
+ changed_qdisc=1
+ /usr/sbin/lg6851f-qdisc
+fi
+[ "$(cat /proc/sys/net/ipv4/tcp_congestion_control)" = "$cc" ]
+[ "$(cat /proc/sys/net/core/default_qdisc)" = "$qdisc" ]
+[ "$(uci -q get 'firewall.@defaults[0].flow_offloading')" = "$sw" ]
+[ "$(uci -q get 'firewall.@defaults[0].flow_offloading_hw')" = "$hw" ]
+committed=1
+echo '设置已保存并应用'

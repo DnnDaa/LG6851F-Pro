@@ -1,0 +1,16 @@
+#!/bin/sh
+# Bounded event worker, never a permanent watchdog or a custom-qdisc owner.
+case "${1:-}" in
+ --queue)
+  exec /usr/libexec/lg6851f-detach /usr/sbin/lg6851f-qdisc-retry --run ;;
+ --run) ;;
+ *) exit 2 ;;
+esac
+exec 8>/var/lock/lg6851f-qdisc-retry.lock
+flock -n 8 || exit 0
+for delay in 2 5 10; do
+ sleep "$delay"
+ /usr/sbin/lg6851f-qdisc 8>&- && exit 0
+done
+logger -t lg6851f-qdisc 'Queue policy still unavailable after bounded retries; custom or busy queues preserved'
+exit 1

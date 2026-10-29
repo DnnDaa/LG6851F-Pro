@@ -5,8 +5,6 @@ config interface 'loopback'
 	list ipaddr '127.0.0.1/8'
 
 config globals 'globals'
-	option dhcp_default_duid '0004cd2c7d951f0e51138082232f3ae9b111'
-	option ula_prefix 'fd20:c125:94d1::/48'
 
 config device
 	option name 'br-lan'
@@ -21,7 +19,14 @@ config interface 'lan'
 
 config interface 'modem5g'
 	option proto 'ql_datacall'
-	option apn '3gnet'
+	option apn ''
 	option mtu '1400'
-	option plmn '460001'
+	option device 'ccmni'
+	option iptype '3'
+	option auto_conf '1'
+	option auto '1'
+
+config interface 'WAN'
+	option proto 'dhcp'
+	option device 'eth1'
 

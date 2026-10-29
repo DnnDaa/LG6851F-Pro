@@ -1,0 +1,1 @@
+{"admin/network/turboacc":{"title":"TurboACC 网络加速","order":60,"action":{"type":"view","path":"network/turboacc-lg6851f"},"depends":{"acl":["luci-app-turboacc"],"fs":{"/usr/libexec/lg6851f-turboacc":"executable"}}}}

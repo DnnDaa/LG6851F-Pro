@@ -1,0 +1,81 @@
+#!/bin/sh /etc/rc.common
+# One-time removal of reboot diagnostics, before logd (S12) starts.
+# Keep the normal 64 KiB RAM ring and the wireless last-good UI cache.
+START=11
+
+clear_old_crash_archive() {
+ local dev=/dev/mmcblk0p46 sys=/sys/class/block/mmcblk0p46
+ local mountpoint mounted_here=0 target resolved expected name result=0
+ [ -b "$dev" ] || return 0
+ [ "$(cat "$sys/partition" 2>/dev/null)" = 46 ] || return 1
+ [ "$(cat "$sys/size" 2>/dev/null)" = 5187456 ] || return 1
+ grep -qx 'PARTNAME=user_data' "$sys/uevent" 2>/dev/null || return 1
+ mountpoint=$(awk -v dev="$dev" '$1 == dev && $3 == "ext4" && $4 ~ /(^|,)rw(,|$)/ { print $2; exit }' /proc/mounts)
+ if [ -z "$mountpoint" ]; then
+  mountpoint=/tmp/lg6851f-clear-diagnostic-userdata
+  [ ! -L "$mountpoint" ] || return 1
+  mkdir -p "$mountpoint" || return 1
+  mount -t ext4 -o rw,noatime,nosuid,nodev "$dev" "$mountpoint" 2>/dev/null || return 1
+  mounted_here=1
+ fi
+ for name in MT6990_CRASH_LOGS MT6990_RUNTIME_LOGS; do
+  target="$mountpoint/$name"
+  if [ -L "$target" ]; then
+   result=1
+  elif [ -d "$target" ]; then
+   resolved=$(readlink -f "$target")
+   expected="$(readlink -f "$mountpoint")/$name"
+   if [ "$resolved" = "$expected" ]; then rm -rf -- "$target" || result=1; else result=1; fi
+  fi
+ done
+ [ "$mounted_here" = 0 ] || umount "$mountpoint" || result=1
+ return "$result"
+}
+
+quiet_ccci_runtime() {
+ local node=/sys/kernel/ccci/mdsys1/debug current
+ [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = 'fiberhome,lg6851f' ] || return 0
+ [ -r "$node" ] && [ -w "$node" ] || return 0
+ IFS= read -r current < "$node"
+ # 3=CRITICAL_UART, 4=CRITICAL_MOBILE. Never override a user-selected
+ # debug level. Error macros still use unconditional pr_notice in either mode.
+ [ "$current" = 3 ] || return 0
+ printf '4\n' > "$node" || return 1
+ IFS= read -r current < "$node"
+ [ "$current" = 4 ]
+}
+
+start() {
+ local root=/overlay/MT6990_DIAGNOSTICS marker=/etc/lg6851f/no-persistent-diagnostics-v52.applied
+ local name changed=0
+ quiet_ccci_runtime || logger -t LG6851F "CCCI quiet mode readback failed"
+ [ ! -f "$marker" ] || return 0
+ # Remove preserved-overlay copies of the old diagnostic startup hooks too.
+ rm -f /etc/rc.d/S99lg6851f_boot_journal /etc/rc.d/K10lg6851f_boot_journal \
+  /etc/rc.d/S98lg6851f_pstore_archive /etc/init.d/lg6851f_boot_journal \
+  /etc/init.d/lg6851f_pstore_archive /usr/sbin/lg6851f-boot-journal \
+  /lib/preinit/06_lg6851f_archive_pstore || return 1
+ if [ -n "$(uci -q get system.@system[0].log_file)" ]; then
+  uci -q delete system.@system[0].log_file; changed=1
+ fi
+ if uci -q get system.@system[0].log_buffer_size >/dev/null; then
+  uci -q delete system.@system[0].log_buffer_size; changed=1
+ fi
+ if [ "$(uci -q get system.@system[0].log_size)" != 64 ]; then
+  uci set system.@system[0].log_size=64; changed=1
+ fi
+ [ "$changed" = 0 ] || uci -q commit system || return 1
+ # This directory also holds a required wireless cache. Never remove it.
+ [ ! -L "$root" ] || return 1
+ for name in system.log system.log.old dmesg-current.log dmesg-current.new \
+  dmesg-previous.log latest-state.txt latest-state.tmp previous-state.txt \
+  boot-current.txt boot-previous.txt system.before-20261019; do
+  rm -f "$root/$name" || return 1
+ done
+ # Clear only the known old startup dump; do not remove arbitrary root files.
+ rm -f /root/lg6851f-vendor618-kernel.log || return 1
+ # Keep configuration backups and the wireless snapshot; discard only logs.
+ clear_old_crash_archive || return 1
+ mkdir -p /etc/lg6851f || return 1
+ printf '%s\n' 'no persistent reboot diagnostics' >"$marker"
+}

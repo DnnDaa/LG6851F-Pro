@@ -1,0 +1,6 @@
+#!/bin/sh /etc/rc.common
+# Apply one saved kernel parameter before firewall/network startup; no daemon.
+START=18
+boot() { /usr/libexec/lg6851f-nat-mode --boot; }
+start() { /usr/libexec/lg6851f-nat-mode --boot; }
+reload() { /usr/libexec/lg6851f-nat-mode --boot; }

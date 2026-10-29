@@ -53,16 +53,17 @@ mount_part() {
 }
 
 valid_unicast_mac() {
-	local mac="$1"
-
-	case "$mac" in
-		""|00:00:00:00:00:00|ff:ff:ff:ff:ff:ff|[13579bdf]:*) return 1 ;;
-	esac
-	return 0
+ local mac="$1" octet='[0-9a-fA-F][0-9a-fA-F]'
+ case "$mac" in ""|00:00:00:00:00:00) return 1;; esac
+ # I/G is the low bit of the FIRST OCTET, not a one-character octet.
+ case "$mac" in
+  [0-9a-fA-F][02468aAcCeE]:$octet:$octet:$octet:$octet:$octet) return 0;;
+  *) return 1;;
+ esac
 }
 
 prepare_wifi_eeprom() {
-	local dir tmp source_mac0 source_mac1 active_mac0 active_mac1
+	local dir tmp staged rc source_mac0 source_mac1 active_mac0 active_mac1
 
 	[ -f "$WIFI_EEPROM_TEMPLATE" ] || {
 		log_msg "ERROR: immutable MT7990 EEPROM template is missing"
@@ -79,7 +80,7 @@ prepare_wifi_eeprom() {
 
 	dir="${WIFI_EEPROM_ACTIVE%/*}"
 	mkdir -p "$dir"
-	tmp="$(mktemp "$dir/.mt7990-eeprom.XXXXXX")" || return 1
+	tmp="$(mktemp /tmp/.mt7990-eeprom.XXXXXX)" || return 1
 	if ! cp "$WIFI_EEPROM_TEMPLATE" "$tmp"; then
 		rm -f "$tmp"
 		return 1
@@ -99,11 +100,11 @@ prepare_wifi_eeprom() {
 				   [ "$active_mac1" = "$source_mac1" ]; then
 					log_msg "using validated device MT7990 MAC slots $active_mac0/$active_mac1"
 				else
-					cp "$WIFI_EEPROM_TEMPLATE" "$tmp"
+					cp "$WIFI_EEPROM_TEMPLATE" "$tmp" || { rm -f "$tmp"; return 1; }
 					log_msg "WARN: MT7990 MAC copy verification failed; using SDK template"
 				fi
 			else
-				cp "$WIFI_EEPROM_TEMPLATE" "$tmp"
+				cp "$WIFI_EEPROM_TEMPLATE" "$tmp" || { rm -f "$tmp"; return 1; }
 				log_msg "WARN: cannot copy MT7990 MAC slots; using SDK template"
 			fi
 		else
@@ -113,8 +114,13 @@ prepare_wifi_eeprom() {
 		log_msg "WARN: device MT7990 EEPROM is unavailable or invalid; using SDK template"
 	fi
 
-	chmod 0644 "$tmp"
-	mv -f "$tmp" "$WIFI_EEPROM_ACTIVE"
+	# Build and compare in tmpfs. Identical boot data must not create an
+	# overlay copy or rewrite the active EEPROM on every service start.
+	if cmp -s "$tmp" "$WIFI_EEPROM_ACTIVE"; then rm -f "$tmp"; return 0; fi
+	staged="$(mktemp "$dir/.mt7990-eeprom.XXXXXX")" || { rm -f "$tmp"; return 1; }
+	if cp "$tmp" "$staged" && chmod 0644 "$staged" && mv -f "$staged" "$WIFI_EEPROM_ACTIVE"; then rc=0; else rc=1; rm -f "$staged"; fi
+	rm -f "$tmp"
+	return "$rc"
 }
 
 start() {

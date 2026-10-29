@@ -7,12 +7,12 @@ import * as M from './wifi-power-model.uc';
 const TOOL='/usr/sbin/lg6851f-mwctl';
 const LOCK='/var/run/lg6851f-wifi-power.lock';
 const TTL=15;
-const READER_VERSION=4;
+const READER_VERSION=6;
 
 function now() {return +(split(trim(readfile('/proc/uptime')??'0'),' ')[0]);}
 function quote(v) {return "'"+replace(''+v,"'","'\\''")+"'";}
 function capture(args) {
- let p=popen('/usr/bin/timeout 3 '+join(' ',map(args,quote))+' 2>&1','r');
+ let p=popen('/usr/bin/timeout -k 1 3 '+join(' ',map(args,quote))+' 2>&1','r');
  if(!p)die('Cannot start driver command');
  let text=p.read('all')??'',code=p.close();
  if(code!=0)die('Driver command failed ('+code+'): '+substr(trim(text),0,240));
@@ -43,7 +43,7 @@ function config(s) {
 }
 function context(s,cfg) {
  return join(':',[trim(readfile('/proc/sys/kernel/random/boot_id')??''),
-  trim(readfile('/sys/class/net/'+s.iface+'/ifindex')??''),cfg.country??'',cfg.channel??'',cfg.htmode??'']);
+  trim(readfile('/sys/class/net/'+s.iface+'/ifindex')??''),cfg.country??'',cfg.channel??'',cfg.htmode??'',cfg.vendor_power_boost??'1',cfg.vendor_power_level??'1']);
 }
 function enabled(s,cfg) {
  let raw=trim(readfile('/sys/class/net/'+s.iface+'/flags')??'0');
@@ -75,44 +75,60 @@ function set_category(s,c,values) {
 function result(s,cfg,snap,target,ok,error,rolled_back) {
  let out=M.summary(s,snap);
  out.ok=ok;out.error=error??null;out.rollback_verified=!!rolled_back;
- out.radio=s.radio;out.iface=s.iface;out.enabled=enabled(s,cfg);out.requested_dbm=M.requested(cfg.txpower);
+ out.radio=s.radio;out.iface=s.iface;out.enabled=enabled(s,cfg);out.requested_dbm=null;out.gain_level=cfg.vendor_power_level??'1';
  out.applied_target_dbm=target;out.timestamp=now();out.context=context(s,cfg);
  out.firmware_readback=true;out.instrument_measured=false;out.reader_version=READER_VERSION;
  return out;
 }
+function custom_profile(s) {
+ let cfg=config(s),level=cfg.vendor_power_level??'1';
+ if(!match(''+level,/^[0123]$/))die('Invalid MCS gain level');
+ if(cfg.vendor_power_boost=='0' || level=='0')return null;
+ let raw=readfile('/usr/share/lg6851f/mcs-power-tiers.json');
+ if(raw==null)die('MCS gain tier definitions unavailable');
+ let data=json(raw),entry=data?.levels?.[level];
+ if(data?.version!=1 || entry==null)die('Invalid MCS gain tier definitions');
+ return {version:1,enabled:true,scope:'supported_ht_vht_he_eht',gain_db:entry.gain_db,level:+level};
+}
 function describe_ceiling(out,p,applied) {
- out.power_policy='factory_per_rate_limit';out.configured_ceiling_dbm=p.target;
+ out.power_policy=p.custom_enabled?'mcs_gain_tier':'factory_zero_extra_gain';out.configured_ceiling_dbm=p.target;
+ out.profile_maximum_dbm=p.profile_peak/2.0;out.boost_enabled=p.custom_enabled;out.mcs_gain_db=p.custom_gain_db;
  out.factory_maximum_dbm=p.factory_peak/2.0;out.effective_ceiling_dbm=p.effective_peak/2.0;
  out.calibration_limited=p.calibration_limited;
- out.supported_maximum_dbm=int(p.factory_peak/2.0);
+ out.supported_maximum_dbm=int(p.profile_peak/2.0);
  out.clipped_rates=p.clipped_rates;out.preserved_rates=p.preserved_rates;
  out.applied_target_dbm=applied && p.target!=null?p.effective_peak/2.0:null;
  return out;
 }
 function with_lock(fn) {
+ let radio_guard=null;
+ if(getenv('LG6851F_RADIO_CONTROL_HELD')!='1'){
+  radio_guard=open('/var/lock/lg6851f-radio-control.lock','a',0600);
+  if(!radio_guard||!radio_guard.lock('xn')){radio_guard?.close();return {ok:false,busy:true,error:'无线状态正在更新，请稍后重试'};}
+ }
  let fd=open(LOCK,'a',0600);
- if(!fd || !fd.lock('xn')){if(fd)fd.close();return {ok:false,busy:true,error:'功率控制正在应用，请稍后重试'};}
+ if(!fd || !fd.lock('xn')){if(fd)fd.close();radio_guard?.close();return {ok:false,busy:true,error:'功率控制正在应用，请稍后重试'};}
  let out;
  try{out=fn();}catch(e){out={ok:false,error:''+e};}
- fd.lock('u');fd.close();return out;
+ fd.lock('u');fd.close();if(radio_guard){radio_guard.lock('u');radio_guard.close();}return out;
 }
 
 export function status(radio) {
  let s,cfg;
  try{s=M.spec(radio);cfg=config(s);}catch(e){return {ok:false,error:''+e};}
- if(!enabled(s,cfg))return {ok:true,radio:radio,enabled:false,requested_dbm:M.requested(cfg.txpower),reference_dbm:null,maximum_dbm:null,minimum_dbm:null};
+ if(!enabled(s,cfg))return {ok:true,radio:radio,enabled:false,requested_dbm:null,reference_dbm:null,maximum_dbm:null,minimum_dbm:null};
  let old=cached(radio),ctx=context(s,cfg);
- if(old && old.reader_version==READER_VERSION && old.context==ctx && old.requested_dbm==M.requested(cfg.txpower) && now()-old.timestamp>=0 && now()-old.timestamp<TTL)return old;
+ if(old && old.reader_version==READER_VERSION && old.context==ctx && old.requested_dbm==null && now()-old.timestamp>=0 && now()-old.timestamp<TTL)return old;
  return with_lock(function() {
-  let snap=snapshot(s),target=M.requested(cfg.txpower),out=result(s,cfg,snap,null,true,null,false);
+  let snap=snapshot(s),target=null,out=result(s,cfg,snap,null,true,null,false);
   let profile=readfile('/etc/lg6851f-vendor618/wireless/mediatek/lg6851f'+(s.channel_band==0?'24':'5')+'.dat');
   try {
    if(profile==null)die('Factory wireless profile unavailable');
-   let p=M.plan(s,snap,M.profile_defaults(profile,s),target);
+   let p=M.plan(s,snap,M.profile_defaults(profile,s),target,custom_profile(s));
    describe_ceiling(out,p,false);out.mcs_tables=M.mcs_tables(s,snap,p,cfg.htmode);M.verify(s,snap,p);describe_ceiling(out,p,true);
   }catch(e){
    out.ok=false;
-   out.error='已保存的功率设置尚未匹配固件读回；当前参考 '+out.reference_dbm+' dBm。'+e;
+   out.error='当前增益档位尚未匹配固件读取；基准参考 '+out.reference_dbm+' dBm。'+e;
   }
   // Historical apply diagnostics must not replace a fresh status measurement.
   if(old && old.context==ctx && old.ok==false && old.requested_dbm==out.requested_dbm) {
@@ -125,12 +141,12 @@ export function status(radio) {
 
 export function apply(radio,value) {
  let s,target;
- try{s=M.spec(radio);target=M.requested(value);}catch(e){return {ok:false,error:''+e};}
+ try{s=M.spec(radio);target=null;}catch(e){return {ok:false,error:''+e};}
  return with_lock(function() {
   let cfg=config(s);if(!enabled(s,cfg))die('Wireless interface is not ready');
   let before=snapshot(s),profile=readfile('/etc/lg6851f-vendor618/wireless/mediatek/lg6851f'+(s.channel_band==0?'24':'5')+'.dat');
   if(profile==null)die('Factory wireless profile unavailable');
-  let defaults=M.profile_defaults(profile,s),p=M.plan(s,before,defaults,target),changed=[];
+  let defaults=M.profile_defaults(profile,s),p=M.plan(s,before,defaults,target,custom_profile(s)),changed=[];
   try {
    for(let c in s.categories)if(!same(p.before[c.name],p.values[c.name])) {
     // Register before calling: a driver may mutate state before returning failure.
@@ -150,7 +166,7 @@ export function apply(radio,value) {
    } catch(err){restore_error=''+err;restored=null;}
    let out;
    if(restored)out=result(s,cfg,restored,null,false,original,true);
-   else out={ok:false,radio:radio,error:original+'; rollback: '+(restore_error??'unverified'),rollback_verified:false,reference_dbm:null,maximum_dbm:null,minimum_dbm:null,timestamp:now(),context:context(s,cfg),requested_dbm:M.requested(cfg.txpower)};
+   else out={ok:false,radio:radio,error:original+'; rollback: '+(restore_error??'unverified'),rollback_verified:false,reference_dbm:null,maximum_dbm:null,minimum_dbm:null,timestamp:now(),context:context(s,cfg),requested_dbm:null};
    store(radio,out);return out;
   }
  });

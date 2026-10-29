@@ -1,6 +1,12 @@
 #!/bin/sh
-case "$ACTION:$INTERFACE" in
- add:ra0|add:rai0|add:eth0|add:eth1)
-  /usr/sbin/lg6851f-wifi-steering || logger -t lg6851f-wifi-steering 'Could not apply one or more affinity settings'
- ;;
-esac
+[ "$ACTION" = add ] || exit 0
+case "$INTERFACE" in *[!A-Za-z0-9_.:-]*|'') exit 0;; esac
+if [ -e "/sys/class/net/$INTERFACE/phy80211" ]; then
+ /usr/sbin/lg6851f-wifi-steering --interface "$INTERFACE" || logger -t lg6851f-wifi-steering 'Could not apply wireless interface affinity settings'
+else
+ case "$INTERFACE" in eth0|eth1)
+  /usr/sbin/lg6851f-wifi-steering --interface "$INTERFACE" || logger -t lg6851f-wifi-steering 'Could not apply Ethernet affinity settings';;
+  ccmni*)
+  /usr/sbin/lg6851f-net-affinity --interface "$INTERFACE" || logger -t lg6851f-net-affinity 'Could not apply cellular interface affinity settings';;
+ esac
+fi

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Let the S19 entry run after factory MAC restoration, before S20network.
+/etc/init.d/zz-lg6851f-stability67 enable
+exit 0

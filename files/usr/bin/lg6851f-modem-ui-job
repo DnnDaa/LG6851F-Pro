@@ -4,29 +4,27 @@
 STATE=/tmp/lg6851f-modem-ui-job.state
 LOG=/tmp/lg6851f-modem-ui-job.log
 CACHE=/tmp/lg6851f-modem-ui-native.cache
-publish() { printf 'ID=%s\nSTATUS=%s\nCODE=%s\nUPDATED=%s\n' "$token" "$1" "$2" "$(date +%s)" > "$STATE.new" && mv "$STATE.new" "$STATE"; }
+publish() { printf 'ID=%s\nSTATUS=%s\nCODE=%s\nUPDATED=%s\nACTION=%s\nSTARTED=%s\n' "$token" "$1" "$2" "$(date +%s)" "$action" "$started" > "$STATE.new" && mv "$STATE.new" "$STATE"; }
 case "$1" in
  start)
   shift
   exec 9>/var/lock/lg6851f-modem-ui-job.lock
   flock -n 9 || { echo 'ERROR=another modem control job is active';exit 75; }
-  token="$(date +%s)-$$"
+  started="$(date +%s)";token="$started-$$";action="$1"
   publish queued 0
   "$0" run "$token" "$@" > /dev/null 2>&1 < /dev/null &
   printf 'ID=%s\n' "$token"
   ;;
  run)
-  token="$2";shift 2
+  token="$2";shift 2;action="$1";started="${token%-*}"
   publish running 0
   trap 'publish error 143; exit 143' TERM INT
-  /usr/bin/timeout 300 /usr/bin/lg6851f-modem-lock "$@" > "$LOG" 2>&1; rc=$?
+  LG6851F_UI_JOB_ID="$token" /usr/bin/timeout 300 /usr/bin/lg6851f-modem-lock "$@" > "$LOG" 2>&1; rc=$?
   if [ "$rc" -eq 0 ]; then
-   if [ "$1" != get ]; then
-    /usr/bin/lg6851f-modem-lock get > "$CACHE.new" 2>&1; query=$?
-   else
-    cp "$LOG" "$CACHE.new";query=0
-   fi
-   if [ "$query" -eq 0 ] && grep -q 'lte band info' "$CACHE.new"; then
+   # Each successful operation carries its own readback. No second native
+   # session (or duplicate release cooldown) is needed after a write.
+   cp "$LOG" "$CACHE.new";query=$?
+   if [ "$query" -eq 0 ] && [ "$(grep -c 'lte band info' "$CACHE.new")" -ge 2 ] && [ "$(grep -c 'nr band info' "$CACHE.new")" -ge 2 ] && grep -q 'The current nwomde:' "$CACHE.new"; then
     mv "$CACHE.new" "$CACHE"
     
     case "$1" in

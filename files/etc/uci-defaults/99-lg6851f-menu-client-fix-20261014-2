@@ -1,5 +1,0 @@
-#!/bin/sh
-rm -f /tmp/luci-indexcache /tmp/luci-indexcache.* /tmp/luci-modulecache/*
-# Rebuild info without displaying the previous firmware's empty client list.
-rm -f /tmp/fiberhomedash.live.json
-exit 0

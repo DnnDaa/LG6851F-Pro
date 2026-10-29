@@ -1,9 +1,0 @@
-#!/bin/sh
-for spec in traffic_interval:3:2 at_interval:20:5 at_slow_interval:120:60; do
- key=${spec%%:*}; rest=${spec#*:}; old=${rest%%:*}; new=${rest#*:}
- [ "$(uci -q get fiberhomedash.main.$key)" != "$old" ] || uci -q set fiberhomedash.main.$key="$new"
-done
-uci -q commit fiberhomedash
-/etc/init.d/lg6851f_modem_stack disable
-/etc/init.d/lg6851f_wifi_after_modem disable
-exit 0

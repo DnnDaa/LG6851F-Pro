@@ -1,0 +1,8 @@
+#!/bin/sh
+
+[ "$(uci -q get network.wan6)" = "interface" ] || exit 0
+[ "$(uci -q get network.wan6.proto)" = "dhcpv6" ] || exit 0
+[ "$(uci -q get network.wan6.device)" = "@modem5g" ] && exit 0
+
+uci set network.wan6.device='@modem5g'
+uci commit network

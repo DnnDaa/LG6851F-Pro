@@ -3,5 +3,5 @@
 START=11
 start() {
  [ ! -w /sys/module/printk/parameters/ignore_loglevel ] || echo N > /sys/module/printk/parameters/ignore_loglevel
- sysctl -q -w kernel.printk="1 4 1 7"
+ sysctl -q -w kernel.printk="4 4 1 7"
 }

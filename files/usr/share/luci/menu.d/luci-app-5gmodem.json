@@ -16,7 +16,7 @@
     "order": 10,
     "action": {
       "type": "view",
-      "path": "modem5g/status_cells_v20261016_1"
+      "path": "modem5g/status_cells_ca_v20261021_27"
     },
     "depends": {
       "acl": [
@@ -43,7 +43,7 @@
     "order": 30,
     "action": {
       "type": "view",
-      "path": "modem5g/network_v20261016_1"
+      "path": "modem5g/network_v20261026_71"
     },
     "depends": {
       "acl": [

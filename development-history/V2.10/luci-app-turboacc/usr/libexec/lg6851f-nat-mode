@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+parameter=/sys/module/nf_nat/parameters/lg6851f_nat_mode
+case "${1:-}" in
+ --boot)
+  mode=$(uci -q get turboacc.main.nat_mode || echo 0)
+  case "$mode" in 0|1|2) ;; *) exit 1;; esac
+  [ -w "$parameter" ] || exit 0
+  [ "$(cat "$parameter")" = "$mode" ] || printf '%s\n' "$mode" >"$parameter"
+  exit 0;;
+ set) [ "$#" = 2 ] || exit 2; mode=$2;;
+ *) exit 2;;
+esac
+case "$mode" in 0|1|2) ;; *) echo 'NAT 模式无效'; exit 2;; esac
+if [ "${LG6851F_NAT_MODE_LOCKED:-}" != 1 ]; then
+ export LG6851F_NAT_MODE_LOCKED=1
+ exec timeout 10 flock -n /var/lock/lg6851f-nat-mode.lock "$0" "$@"
+fi
+[ -w "$parameter" ] || { echo '兼容 NAT 内核模块尚未加载，需要先更新并重启'; exit 1; }
+[ -z "$(uci -q changes turboacc)" ] || { echo 'TurboACC 有未提交修改，请先保存或撤销'; exit 1; }
+previous=$(cat "$parameter")
+saved=$(uci -q get turboacc.main.nat_mode || echo 0)
+if [ "$previous:$saved" = "$mode:$mode" ]; then echo '当前 NAT 模式已生效'; exit 0; fi
+work=$(mktemp -d /tmp/lg6851f-nat-mode.XXXXXX)
+chmod 700 "$work"
+cp -p /etc/config/turboacc "$work/config"
+committed=0
+cleanup() {
+ result=$?
+ trap - EXIT HUP INT TERM
+ if [ "$committed" != 1 ]; then
+  printf '%s\n' "$previous" >"$parameter" || true
+  uci -q revert turboacc || true
+  cp -p "$work/config" /etc/config/turboacc
+ fi
+ rm -f "$work/config"
+ rmdir "$work"
+ exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+printf '%s\n' "$mode" >"$parameter"
+[ "$(cat "$parameter")" = "$mode" ]
+uci set "turboacc.main.nat_mode=$mode"
+uci commit turboacc
+[ "$(uci -q get turboacc.main.nat_mode)" = "$mode" ]
+committed=1
+echo 'NAT 模式已应用；新连接使用新模式，已有连接和映射按原生命周期结束'

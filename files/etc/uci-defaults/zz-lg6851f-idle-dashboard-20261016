@@ -1,6 +1,0 @@
-#!/bin/sh
-# Preserved settings: reduce observations, never alter radio, IRQ, recovery or cooling.
-uci -q set fiberhomedash.main.at_interval='5'
-uci -q set fiberhomedash.main.watch_timeout='45'
-uci -q commit fiberhomedash
-exit 0

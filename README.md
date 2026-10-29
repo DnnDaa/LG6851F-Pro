@@ -4,23 +4,25 @@
 
 **本仓库的解锁路线只有短信注入。** 不收录其他解锁方式。非烽火Pro2024、NAND/UBI 设备不能使用本项目分区镜像。
 
-## 固件与工具下载
+## V2.10 固件与工具下载
 
-[本版 Release](https://github.com/DnnDaa/LG6851F-Pro/releases/tag/v1.0.2) · [全部版本](https://github.com/DnnDaa/LG6851F-Pro/releases)
+[本版 Release](https://github.com/DnnDaa/LG6851F-Pro/releases/tag/V2.10) · [完整更新说明](docs/releases/V2.10.md) · [历来更新记录](CHANGELOG.md)
+
+基于 **systemfix-94 / Linux 6.18.44 旧分支**，同时提供 A/B 两槽。B 包保留 A 槽原厂系统与共享 SSH 文件；A 包仅适用于明确准备覆盖 A 槽的设备。网页包用于同槽升级，不直接负责跨槽首次安装。
 
 | 文件 | 下载 |
 |---|---|
-| A 槽网页升级固件 | [sysupgrade.tar.gz](https://github.com/DnnDaa/LG6851F-Pro/releases/download/v1.0.2/lg6851f-pro-v1.0.2-public-sysupgrade.tar.gz) |
-| A 槽 MTK 刷机包 | [mtk.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/v1.0.2/lg6851f-pro-v1.0.2-public-mtk.zip) |
-| Windows 刷机工具与驱动 | [flash-tools.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-windows-flash-tools.zip) |
-| 完整工程源码（保留 Linux 权限和符号链接） | [source.tar.zst](https://github.com/DnnDaa/LG6851F-Pro/releases/download/v1.0.2/lg6851f-pro-v1.0.2-source.tar.zst) |
-| SHA256 校验清单 | [SHA256SUMS.txt](https://github.com/DnnDaa/LG6851F-Pro/releases/download/v1.0.2/SHA256SUMS.txt) |
+| A 槽 网页升级 | [lg6851f-pro-V2.10-public-A-sysupgrade.tar.gz](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/lg6851f-pro-V2.10-public-A-sysupgrade.tar.gz) |
+| A 槽 MTK Download Only | [lg6851f-pro-V2.10-public-A-mtk.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/lg6851f-pro-V2.10-public-A-mtk.zip) |
+| B 槽 网页升级 | [lg6851f-pro-V2.10-public-B-sysupgrade.tar.gz](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/lg6851f-pro-V2.10-public-B-sysupgrade.tar.gz) |
+| B 槽 MTK Download Only | [lg6851f-pro-V2.10-public-B-mtk.zip](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/lg6851f-pro-V2.10-public-B-mtk.zip) |
+| 完整工程/改动源码及精确运行层 | [source.tar.gz](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/lg6851f-pro-V2.10-source.tar.gz) |
+| 校验清单 | [SHA256SUMS.txt](https://github.com/DnnDaa/LG6851F-Pro/releases/download/V2.10/SHA256SUMS.txt) |
+| Windows MTK 工具/驱动 | [历史工具包](https://github.com/DnnDaa/LG6851F-Pro/releases/download/lg6851f-public-20261015/lg6851f-windows-flash-tools.zip) |
 
-本版标为预发布；请先阅读下方型号要求和安装教程。源码归档与 Release 标签对应，main 分支另补充下载链接和发布说明。
+V2.10 累积修复：AP/客户端与 BSS 槽位复用、TurboACC 和独立 NAT 模式、HNAT 重复统计开销、动态蜂窝 wan6 与 LAN IPv6、共享快照、概览局部异常隔离、中文及响应式布局。保留原厂 Wi-Fi7/MLO 和 HNAT/PPE/WED、BBR/CAKE、蜂窝、风扇、五灯、OpenClash/Mihomo、Nikki。公开版去除个人配置，首启从本机只读取得校准。
 
-## v1.0.2 更新
-
-[完整更新说明](docs/releases/v1.0.2.md)：整合看板信号与资源刷新、蜂窝/短信/流量、双频扫描、逐 MCS 功率限幅、系统资源优化，以及后台登录和无线编辑恢复修正。仅提供本机原厂表范围内的功率选项，保留原厂驱动和加速。
+本轮完成签名/根层/模块/槽位/包一致性检查；公开 A/B 组合尚未重新刷入冷启动、跨设备及长期验收，不保证固定 CPU 百分比。精确重打包及重编译边界见 [源码说明](docs/releases/V2.10-source.md)。历史版本见 [v1.0.2](docs/releases/v1.0.2.md)，当时行为不应当成 V2.10 现状。
 
 ## 从这里开始
 

@@ -1,7 +1,0 @@
-#!/bin/sh
-# A new migration runs even if last release's CRLF script was consumed.
-/etc/init.d/lg6851f-cellular-traffic enable
-# rcS may have expanded S* before a migration restored its symlink.
-# Register with procd now; this starts no test or traffic workload.
-/etc/init.d/lg6851f-cellular-traffic start
-exit 0

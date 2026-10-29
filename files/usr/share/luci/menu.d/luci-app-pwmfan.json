@@ -4,7 +4,7 @@
     "order": 65,
     "action": {
       "type": "view",
-      "path": "pwmfan/control_v20261015_2"
+      "path": "pwmfan/control_ui_v20261026_71"
     },
     "depends": {
       "acl": [

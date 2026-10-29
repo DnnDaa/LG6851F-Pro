@@ -1,0 +1,6 @@
+#!/bin/sh
+# Netdevice creation can precede DHCP/ifup; catch the later automatic mq tree.
+case "$ACTION:${INTERFACE:-${DEVICENAME:-}}" in
+ add:eth0|add:eth1|add:ccmni[0-9]*|add:ra[0-7]|add:rai[0-7])
+  /usr/sbin/lg6851f-qdisc-retry --queue ;;
+esac

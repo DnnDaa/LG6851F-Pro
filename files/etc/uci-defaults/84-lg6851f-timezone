@@ -1,0 +1,10 @@
+#!/bin/sh
+
+current="$(uci -q get system.@system[0].zonename)"
+
+if [ "$current" = "UTC" ]; then
+	uci set system.@system[0].zonename='Asia/Shanghai'
+	uci commit system
+fi
+
+exit 0

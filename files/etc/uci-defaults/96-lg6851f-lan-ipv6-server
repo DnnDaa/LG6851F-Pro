@@ -1,0 +1,8 @@
+#!/bin/sh
+
+[ "$(uci -q get dhcp.lan)" = "dhcp" ] || exit 0
+
+uci set dhcp.lan.ra='server'
+uci set dhcp.lan.dhcpv6='server'
+uci set dhcp.lan.ra_slaac='1'
+uci commit dhcp

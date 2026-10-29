@@ -1,0 +1,583 @@
+'use strict';
+'require view';
+'require poll';
+'require request';
+'require network';
+'require ui';
+'require rpc';
+'require lg6851f.wireless_v20261023_53 as sharedWireless';
+'require tools.prng as random';
+
+function operatingInfo(frame,radio){
+ const band=radio.dev.get('band');
+ const list=frame?.wifi?.radios||[];
+ const r=list.find(r=>r.up!==false&&r.enabled!==false&&({'2.4 GHz':'2g','5 GHz':'5g','6 GHz':'6g'})[r.band]===band&&r.bssid&&r.operating_width_mhz>0);
+ if(!r)return {};
+ function channel(freq){if(freq===2484)return 14;if(freq>=2412&&freq<=2472)return (freq-2407)/5;if(freq>=5000&&freq<5925)return (freq-5000)/5;if(freq>=5955)return (freq-5950)/5;return null;}
+ return {bssid:r.bssid,channel:r.channel,mode:'Master',ssid:r.ssid,
+   center_chan1:channel(r.center_freq1),center_chan2:r.split_80p80?channel(r.center_freq2):null,
+   htmode:r.split_80p80?'VHT80+80':'EHT'+r.operating_width_mhz};
+}
+return view.extend({
+    operatingInfo:operatingInfo,
+	callFrequencyList: rpc.declare({
+		object: 'iwinfo',
+		method: 'freqlist',
+		params: [ 'device' ],
+		expect: { results: [] }
+	}),
+
+	callInfo: rpc.declare({
+		object: 'iwinfo',
+		method: 'info',
+		params: [ 'device' ],
+		expect: { }
+	}),
+
+	render_signal_badge(signalPercent, signalValue) {
+		let icon, title, value;
+
+		if (signalPercent < 0)
+			icon = L.resource('icons/signal-none.svg');
+		else if (signalPercent == 0)
+			icon = L.resource('icons/signal-000-000.svg');
+		else if (signalPercent < 25)
+			icon = L.resource('icons/signal-000-025.svg');
+		else if (signalPercent < 50)
+			icon = L.resource('icons/signal-025-050.svg');
+		else if (signalPercent < 75)
+			icon = L.resource('icons/signal-050-075.svg');
+		else
+			icon = L.resource('icons/signal-075-100.svg');
+
+		value = '%d\xa0%s'.format(signalValue, _('dBm'));
+		title = '%s: %d %s'.format(_('Signal'), signalValue, _('dBm'));
+
+		return E('div', {
+			'class': 'ifacebadge',
+			'title': title,
+			'data-signal': signalValue
+		}, [
+			E('img', { 'src': icon }),
+			value
+		]);
+	},
+
+	add_wifi_to_graph(chan_analysis, res, scanCache, channels, channel_width) {
+		const offset_tbl = chan_analysis.offset_tbl;
+		const height = chan_analysis.graph.offsetHeight - 2;
+		const step = chan_analysis.col_width;
+		const height_diff = (height-(height-(res.signal*-4)));
+
+		if (scanCache[res.bssid].color == null)
+			scanCache[res.bssid].color = random.derive_color(res.bssid);
+
+		if (scanCache[res.bssid].graph == null || scanCache[res.bssid].graph === undefined) {
+			const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+			const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+			const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+			const color = scanCache[res.bssid].color;
+
+			line.setAttribute('style', 'fill:'+color+'4f'+';stroke:'+color+';stroke-width:0.5');
+			text.setAttribute('style', 'fill:'+color+';font-size:9pt; font-family:sans-serif; text-shadow:1px 1px 1px #000');
+			text.appendChild(document.createTextNode(res.ssid || res.bssid));
+
+			group.appendChild(line);
+			group.appendChild(text);
+
+			chan_analysis.graph.firstElementChild.appendChild(group);
+			scanCache[res.bssid].graph = { group : group, line : line, text : text };
+		}
+
+		channels.forEach(function(channel) {
+            if(!Number.isFinite(offset_tbl[channel]) || !Number.isFinite(offset_tbl[res.channel]))return;
+			if (channel_width > 2) {
+				if (!("main" in scanCache[res.bssid].graph)) {
+					const main = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+					main.setAttribute('style', 'fill:url(#GradientVerticalCenteredBlack)');
+					scanCache[res.bssid].graph.group.appendChild(main);
+					chan_analysis.graph.firstElementChild.lastElementChild.appendChild(main);
+					scanCache[res.bssid].graph["main"] = main;
+				}
+				const main_offset = offset_tbl[res.channel];
+				const points = [
+					(main_offset-(step*(2  )))+','+height,
+					(main_offset-(step*(2-1)))+','+height_diff,
+					(main_offset+(step*(2-1)))+','+height_diff,
+					(main_offset+(step*(2  )))+','+height
+				];
+				scanCache[res.bssid].graph.main.setAttribute('points', points);
+			}
+
+			const chan_offset = offset_tbl[channel];
+			const points = [
+				(chan_offset-(step*(channel_width  )))+','+height,
+				(chan_offset-(step*(channel_width-1)))+','+height_diff,
+				(chan_offset+(step*(channel_width-1)))+','+height_diff,
+				(chan_offset+(step*(channel_width  )))+','+height
+			];
+
+			scanCache[res.bssid].graph.text.setAttribute('x', offset_tbl[res.channel]-step);
+			scanCache[res.bssid].graph.text.setAttribute('y', height_diff - 2);
+			scanCache[res.bssid].graph.line.setAttribute('points', points);
+			scanCache[res.bssid].graph.group.style.zIndex = res.signal*-1;
+			scanCache[res.bssid].graph.group.style.opacity = res.stale ? '0.5' : null;
+		})
+	},
+
+	create_channel_graph(chan_analysis, freq_tbl, band) {
+		const columns = (band != 2) ? freq_tbl.length * 4 : freq_tbl.length + 3;
+		const chan_graph = chan_analysis.graph;
+		const G = chan_graph.firstElementChild;
+		const step = (chan_graph.offsetWidth - 2) / columns;
+		let curr_offset = step;
+
+		function createGraphHLine(graph, pos, width, dash) {
+			const elem = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+			elem.setAttribute('x1', pos);
+			elem.setAttribute('y1', 0);
+			elem.setAttribute('x2', pos);
+			elem.setAttribute('y2', '100%');
+			elem.setAttribute('style', 'stroke:black;stroke-width:'+width+';stroke-dasharray:'+dash);
+			graph.appendChild(elem);
+		}
+
+		function createGraphText(graph, pos, text) {
+			const elem = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+			elem.setAttribute('y', 15);
+			elem.setAttribute('style', 'fill:#eee; font-size:9pt; font-family:sans-serif; text-shadow:1px 1px 1px #000');
+			elem.setAttribute('x', pos + 5);
+			elem.appendChild(document.createTextNode(text));
+			graph.appendChild(elem);
+		}
+
+		chan_analysis.col_width = step;
+
+		createGraphHLine(G,curr_offset, 0.1, 1);
+		for (let i=0; i< freq_tbl.length;i++) {
+			const channel = freq_tbl[i]
+			chan_analysis.offset_tbl[channel] = curr_offset+step;
+
+			if (band != 2) {
+				createGraphHLine(G,curr_offset+step, 0.1, 3);
+				if (channel < 100)
+					createGraphText(G,curr_offset-(step/2), channel);
+				else
+					createGraphText(G,curr_offset-step, channel);
+			} else {
+				createGraphHLine(G,curr_offset+step, 0.1, 0);
+				createGraphText(G,curr_offset+step, channel);
+			}
+			curr_offset += step;
+
+			if ((band != 2) && freq_tbl[i+1]) {
+				const next_channel = freq_tbl[i+1];
+				/* Check if we are transitioning to another 5/6Ghz band range */
+				if ((next_channel - channel) == 4) {
+					for (let j=1; j < 4; j++) {
+						chan_analysis.offset_tbl[channel+j] = curr_offset+step;
+						if (j == 2)
+							createGraphHLine(G,curr_offset+step, 0.1, 0);
+						else
+							createGraphHLine(G,curr_offset+step, 0.1, 1);
+						curr_offset += step;
+					}
+				} else {
+					chan_analysis.offset_tbl[channel+1] = curr_offset+step;
+					createGraphHLine(G,curr_offset+step, 0.1, 1);
+					curr_offset += step;
+
+					chan_analysis.offset_tbl[next_channel-2] = curr_offset+step;
+					createGraphHLine(G,curr_offset+step, 0.5, 0);
+					curr_offset += step;
+
+					chan_analysis.offset_tbl[next_channel-1] = curr_offset+step;
+					createGraphHLine(G,curr_offset+step, 0.1, 1);
+					curr_offset += step;
+				}
+			}
+		}
+		createGraphHLine(G,curr_offset+step, 0.1, 1);
+
+		chan_analysis.tab.addEventListener('cbi-tab-active', L.bind(function(ev) {
+			this.active_tab = ev.detail.tab;
+			if (!this.radios[this.active_tab].loadedOnce)
+				this.handleScanRefresh();
+		}, this));
+	},
+
+
+    callScanStart: rpc.declare({object:'lg6851f.scan',method:'start',params:['device','refresh'],nobatch:true,reject:true,expect:{}}),
+    callScanStatus: rpc.declare({object:'lg6851f.scan',method:'status',params:['device'],nobatch:true,reject:true,expect:{}}),
+
+    renderScanResults(radio, results, local_wifi) {
+        let q = 0;
+        results = results.map(row => ({ ...row }));
+        for (const value of Object.values(radio.scanCache)) value.graph?.group?.remove();
+        radio.scanCache = {};
+			const table = radio.table;
+			const chan_analysis = radio.graph;
+			const scanCache = radio.scanCache;
+			const band = radio.band;
+
+			const rows = [];
+
+			for (let res of results) {
+				if (scanCache[res.bssid] == null)
+					scanCache[res.bssid] = {};
+
+				scanCache[res.bssid].data = res;
+				scanCache[res.bssid].data.stale = false;
+			}
+
+			if (local_wifi.bssid && band + 'g' == radio.dev.get('band')) {
+				if (scanCache[local_wifi.bssid] == null)
+					scanCache[local_wifi.bssid] = {};
+
+				scanCache[local_wifi.bssid].data = local_wifi;
+
+				if (chan_analysis.offset_tbl[local_wifi.channel] != null && local_wifi.center_chan1) {
+					const center_channels = [local_wifi.center_chan1];
+					const chan_width_text = String(local_wifi.htmode || '').replace(/[EV]*H[TE]/,''); /* Handle HT VHT HE EHT */
+					let chan_width = parseInt(chan_width_text)/10;
+
+					if (local_wifi.center_chan2) {
+						center_channels.push(local_wifi.center_chan2);
+						chan_width = 8;
+					}
+
+					local_wifi.signal = -10;
+					local_wifi.ssid = 'Local Interface';
+					q = Math.min((local_wifi.signal + 110) / 70 * 100, 100);
+
+					this.add_wifi_to_graph(chan_analysis, local_wifi, scanCache, center_channels, chan_width);
+					rows.push([
+						this.render_signal_badge(q, local_wifi.signal),
+						[
+							E('span', { 'style': 'color:'+scanCache[local_wifi.bssid].color }, '⬤ '),
+							local_wifi.ssid
+						],
+						'%d'.format(local_wifi.channel),
+						'%h MHz'.format(chan_width_text),
+						'%h'.format(local_wifi.mode),
+						'%h'.format(local_wifi.bssid)
+					]);
+				}
+			}
+
+			for (let k in scanCache)
+				if (scanCache[k].data.stale)
+					results.push(scanCache[k].data);
+
+			results.sort(function(a, b) {
+				if (a.channel !== b.channel)
+					return a.channel - b.channel;
+
+				if (a.ssid < b.ssid)
+					return -1;
+				else if (a.ssid > b.ssid)
+					return 1;
+
+				if (a.bssid < b.bssid)
+					return -1;
+				else if (a.bssid > b.bssid)
+					return 1;
+
+				return 0;
+			});
+
+			for (let res of results) {
+				const qv = res.quality || 0;
+				const qm = res.quality_max || 0;
+				q = (qv > 0 && qm > 0) ? Math.floor((100 / qm) * qv) : 0;
+				const s = res.stale ? 'opacity:0.5' : '';
+				const center_channels = [res.channel];
+				let chan_width = 2;
+
+				/* Skip WiFi not supported by the current band */
+				if (band != res.band)
+					continue;
+				if (chan_analysis.offset_tbl[res.channel] == null)
+					continue;
+
+				res.channel_width = "20 MHz";
+				if (res.ht_operation != null) {
+					/* Detect 40 MHz operation by looking for the presence of
+					 * a secondary channel. */
+					if (res.ht_operation.secondary_channel_offset == "below") {
+						res.channel_width = "40 MHz";
+						chan_width = 4; /* 40 MHz Channel Used */
+						center_channels[0] -= 2;
+					} else if (res.ht_operation.secondary_channel_offset == "above") {
+						res.channel_width = "40 MHz";
+						chan_width = 4; /* 40 MHz Channel Used */
+						center_channels[0] += 2;
+					} else {
+						/* Fallback to 20 MHz due to discovery of other APs on the
+						 * same channel (802.11n coexistence mechanism). */
+						if (res.ht_operation.channel_width == 2040)
+							res.channel_width = "20 MHz (40 MHz Intolerant)";
+					}
+				}
+
+				/* if channel_width <= 40, refer to HT (above) for actual channel width,
+				 * as vht_operation.channel_width == 40 really only means that the used
+				 * bandwidth is <= 40 and could be 20 Mhz as well */
+				if (res.vht_operation?.channel_width > 40) {
+					center_channels[0] = res.vht_operation.center_freq_1;
+					if (res.vht_operation.channel_width == 80) {
+						chan_width = 8;
+						res.channel_width = "80 MHz";
+
+						/* If needed, adjust based on the 802.11ac Wave 2 interop workaround. */
+						if (res.vht_operation.center_freq_2) {
+							const diff = Math.abs(res.vht_operation.center_freq_2 -
+							                    res.vht_operation.center_freq_1);
+
+							if (diff == 8) {
+								chan_width = 16;
+								res.channel_width = "160 MHz";
+								center_channels.push(res.vht_operation.center_freq_2);
+							} else if (diff > 8) {
+								chan_width = 8;
+								res.channel_width = "80+80 MHz";
+								center_channels.push(res.vht_operation.center_freq_2);
+							}
+						}
+					} else if (res.vht_operation.channel_width == 8080) {
+						res.channel_width = "80+80 MHz";
+						chan_width = 8;
+						center_channels.push(res.vht_operation.center_freq_2);
+					} else if (res.vht_operation.channel_width == 160) {
+						res.channel_width = "160 MHz";
+						chan_width = 16;
+					}
+				}
+
+				if (res.he_operation?.channel_width > 20) {
+					center_channels[0] = res.he_operation.center_freq_1;
+					chan_width = res.he_operation.channel_width / 10;
+					switch (res.he_operation.channel_width) {
+						case 40:
+							res.channel_width = "40 MHz";
+							break;
+						case 80:
+							res.channel_width = "80 MHz";
+							break;
+						case 160:
+							res.channel_width = "160 MHz";
+							center_channels.push(res.he_operation.center_freq_2);
+							break;
+					}
+				}
+
+				if (res.eht_operation?.channel_width == 320) {
+					chan_width = 32;
+					res.channel_width = "320 MHz";
+					center_channels.push(res.eht_operation.center_freq_2);
+				}
+
+				this.add_wifi_to_graph(chan_analysis, res, scanCache, center_channels, chan_width);
+
+				rows.push([
+					E('span', { 'style': s }, this.render_signal_badge(q, res.signal)),
+					E('span', { 'style': s }, [
+						E('span', { 'style': 'color:'+scanCache[res.bssid].color }, '⬤ '),
+						(res.ssid != null) ? '%h'.format(res.ssid) : E('em', _('hidden'))
+					]),
+					E('span', { 'style': s }, '%d'.format(res.channel)),
+					E('span', { 'style': s }, '%h'.format(res.channel_width)),
+					E('span', { 'style': s }, '%h'.format(res.mode)),
+					E('span', { 'style': s }, '%h'.format(res.bssid))
+				]);
+
+				scanCache[res.bssid].data.stale = true;
+			}
+
+			cbi_update_table(table, rows);
+
+
+        radio.loadedOnce = true;
+    },
+
+    handleScanRefresh(refresh) {
+        const radio = this.radios[this.active_tab];
+        if (!radio || this._scanning || this._unloaded) return;
+        this._scanning = true;
+        if (this.scanButton) this.scanButton.disabled = true;
+        const generation = this._generation;
+        let failures = 0, completed = false;
+        const alive = () => !this._unloaded && this._generation === generation;
+        const show = text => { if (alive()) radio.message.textContent = text || ''; };
+        const finish = () => {
+            if (!alive() || completed) return;
+            completed = true;
+            clearTimeout(this._scanTimer);
+            this._scanning = false;
+            if (this.scanButton) this.scanButton.disabled = false;
+            const next = this.radios[this.active_tab];
+            if (next && next !== radio && !next.loadedOnce)
+                this._scanTimer = setTimeout(() => this.handleScanRefresh(), 0);
+        };
+        const apply = data => {
+            if (!alive() || completed) return;
+            if (data.available && Array.isArray(data.results) && data.revision !== radio.revision) {
+                radio.results = data.results;
+                this.renderScanResults(radio, data.results, radio.localInfo || {});
+                radio.revision = data.revision;
+            }
+            show(data.pending ? '正在扫描无线信道…' : data.error);
+            if (!data.pending) {
+                if (!data.available) cbi_update_table(radio.table, [], E('em', {}, data.error || '没有可用的扫描结果'));
+                finish();
+                return;
+            }
+            this._scanTimer = setTimeout(pollStatus, 1200);
+        };
+        const failed = () => {
+            if (!alive() || completed) return;
+            // A lost HTTP response does not cancel the backend job; reconnect to it.
+            if (++failures <= 5) this._scanTimer = setTimeout(pollStatus, 1200);
+            else { show('暂时无法读取扫描结果，恢复连接后可点击“刷新信道”'); finish(); }
+        };
+        const pollStatus = () => {
+            if (!alive() || completed) return;
+            return this.callScanStatus(radio.dev.getName()).then(data => { failures = 0; apply(data); }).catch(failed);
+        };
+        show('正在读取无线信道…');
+        // Local AP decoration is optional. Its failure must not discard a completed scan.
+        sharedWireless.read().then(frame => {
+            const info=operatingInfo(frame,radio);
+            if (!alive()) return;
+            radio.localInfo = info || {};
+            if (radio.results) this.renderScanResults(radio, radio.results, radio.localInfo);
+        }).catch(() => {});
+        return this.callScanStart(radio.dev.getName(), refresh === true).then(apply).catch(failed);
+    },
+
+	radios: {},
+
+	loadSVG(src) {
+		return request.get(src).then(function(response) {
+			if (!response.ok)
+				throw new Error(response.statusText);
+
+			return E('div', {
+				'id': 'channel_graph',
+				'style': 'width:100%;height:400px;border:1px solid #000;background:#fff'
+			}, E(response.text()));
+		});
+	},
+
+	load() {
+		return Promise.all([
+			this.loadSVG(L.resource('svg/channel_analysis.svg')),
+			network.getWifiDevices().then(L.bind(function(data) {
+				const tasks = [], ret = [];
+
+				for (let d of data) {
+					ret[d.getName()] = { dev : d };
+
+					tasks.push(this.callFrequencyList(d.getName())
+					.then(L.bind(function(radio, data) {
+						ret[radio.getName()].freq = data;
+					}, this, d)).catch(function(error){ret[d.getName()].freq=[];ret[d.getName()].error=error.message || String(error);}));
+				}
+
+				return Promise.all(tasks).then(function() { return ret; })
+			}, this))
+		]);
+	},
+
+	render([svg, wifiDevs]) {
+		clearTimeout(this._scanTimer);this._generation=(this._generation||0)+1;this.radios={};this._unloaded=false;this._scanning=false;
+		const h2 = E('div', {'class' : 'cbi-title-section'}, [
+			E('h2', {'class': 'cbi-title-field'}, [ _('Channel Analysis') ]),
+			E('div', {'class': 'cbi-title-buttons'  }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-edit',
+					'click': L.bind(function() { this.handleScanRefresh(true); }, this)
+				}, [ _('Refresh Channels') ])])
+			]);
+
+		const tabs = E('div', {}, E('div'));
+
+		for (let ifname in wifiDevs) {
+			const bands = {
+				[2] : { title: '2.4GHz', channels: [] },
+				[5] : { title: '5GHz', channels: [] },
+				[6] : { title: '6GHz', channels: [] },
+			};
+
+			/* Vendor PHY capabilities can cover both radios. Bind each logical
+			 * radio to its configured band instead of creating extra radio1 tabs.
+			 */
+			const dev=wifiDevs[ifname].dev;
+			const configuredBand=dev.get('type')=='vendor618'?dev.get('band'):null;
+			(wifiDevs[ifname].freq||[]).forEach(function(freq) {
+				if(configuredBand && String(freq.band)+'g'!==configuredBand)return;
+				if (bands[freq.band] && !bands[freq.band].channels.includes(freq.channel))
+					bands[freq.band].channels.push(freq.channel);
+			});
+
+			for (let band in bands) {
+				if (bands[band].channels.length == 0)
+					continue;
+
+				const csvg = svg.cloneNode(true);
+				const table = E('table', { 'class': 'table' }, [
+					E('tr', { 'class': 'tr table-titles' }, [
+						E('th', { 'class': 'th col-2 middle center' }, _('Signal')),
+						E('th', { 'class': 'th col-4 middle left' }, _('SSID')),
+						E('th', { 'class': 'th col-2 middle center hide-xs' }, _('Channel')),
+						E('th', { 'class': 'th col-3 middle left' }, _('Channel Width')),
+						E('th', { 'class': 'th col-2 middle left hide-xs' }, _('Mode')),
+						E('th', { 'class': 'th col-3 middle left hide-xs' }, _('BSSID'))
+					])
+				]),
+				tab = E('div', { 'data-tab': ifname+band, 'data-tab-title': ifname+' ('+bands[band].title+')' },
+						[E('br'),csvg,E('br'),E('p', { 'class':'channel-scan-message', 'role':'status' }),table,E('br')]),
+				graph_data = {
+					graph: csvg,
+					offset_tbl: {},
+					col_width: 0,
+					tab: tab,
+				};
+
+				this.radios[ifname+band] = {
+					dev: wifiDevs[ifname].dev,
+					band: band,
+					graph: graph_data,
+					table: table,
+                    message: tab.querySelector('.channel-scan-message'),
+					scanCache: {},
+					loadedOnce: false,
+				};
+
+				cbi_update_table(table, [], E('em', { class: 'spinning' }, _('Starting wireless scan...')));
+
+				tabs.firstElementChild.appendChild(tab)
+
+				requestAnimationFrame(L.bind(this.create_channel_graph, this, graph_data, bands[band].channels, band));
+			}
+		}
+
+        this.active_tab=Object.keys(this.radios)[0] || null;
+        this.scanButton=h2.querySelector('button');
+        ui.tabs.initTabGroup(tabs.firstElementChild.childNodes);
+        if(!this.active_tab)tabs.appendChild(E('p',{},'当前没有可扫描的无线接口，请确认对应频段已启用。'));
+
+        this.pollFn = L.bind(this.handleScanRefresh,this);
+		requestAnimationFrame(L.bind(this.handleScanRefresh,this));
+
+		return E('div', {}, [h2, tabs]);
+	},
+
+    unload:function(){
+        this._unloaded=true;this._generation=(this._generation||0)+1;clearTimeout(this._scanTimer);
+        if(this.pollFn)poll.remove(this.pollFn);
+    },
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null
+});

@@ -4,24 +4,42 @@
 # then its stock auto_recovery.sh path as the final fallback:
 # PDP restart -> PS re-attach -> radio restart -> rebuild the MIPC/CCMNI chain.
 
+. /lib/functions/lg6851f-modem-guard.sh
+RECOVERY_OWNED=0
 TAG="lg6851f-data-watchdog"
 CHECK_INTERVAL=20
 SETTLE_TIME=60
 FAIL_LIMIT=3
 RECOVERY_LOCK=/var/lock/lg6851f-modem-recovery.lock
 CONTROL_ACTIVE=/tmp/lg6851f-modem-control.active
+USER_DISABLED=/tmp/lg6851f-modem-user-disabled
 
 log() {
 	logger -t "$TAG" "$*"
-	echo "$TAG: $*"
+	# logger alone: procd stdout would otherwise log each message twice.
+}
+mono() {
+	read -r seconds rest </proc/uptime
+	printf '%s' "${seconds%.*}"
 }
 
 interface_state() {
-	ubus call network.interface.modem5g status 2>/dev/null
+	timeout -k 2 5 ubus -S call network.interface.modem5g status 2>/dev/null
 }
 
-link_value() {
-	printf '%s' "$1" | jsonfilter -e "$2" 2>/dev/null
+read_interface_values() {
+ # One parser invocation for the three fields; no eval of external text.
+ # Missing fields still fail the existing boolean/numeric/device guards.
+ local parsed
+ parsed="$(printf '%s' "$1" | jsonfilter -e '@.up' -e '@.uptime' -e '@.l3_device' 2>/dev/null)"
+ up= uptime= device=
+ {
+  IFS= read -r up || up=
+  IFS= read -r uptime || uptime=
+  IFS= read -r device || device=
+ } <<EOF
+$parsed
+EOF
 }
 
 read_rx_packets() {
@@ -71,19 +89,30 @@ wait_cli_idle() {
 }
 
 recovery_lock() {
-	local waited=0
-	while ! mkdir "$RECOVERY_LOCK" 2>/dev/null; do
-		[ "$waited" -ge 60 ] && return 1
-		sleep 1
-		waited=$((waited + 1))
-	done
-	trap 'rmdir "$RECOVERY_LOCK" 2>/dev/null' EXIT INT TERM
+ lg6851f_recovery_enter || return 1
+ RECOVERY_OWNED=1
+ exec 9>/var/lock/luci-modem5g-control.lock
+ if ! timeout -k 1 30 flock -x 9; then recovery_unlock; return 1; fi
+ # Automatic recovery also owns the shared informational MIPC lane.
 }
-
 recovery_unlock() {
-	rmdir "$RECOVERY_LOCK" 2>/dev/null
-	trap - EXIT INT TERM
+ [ "$RECOVERY_OWNED" = 1 ] || return 0
+ flock -u 9 2>/dev/null || :
+ exec 9>&-
+ lg6851f_recovery_leave
+ RECOVERY_OWNED=0
 }
+recovery_at() {
+ local rc
+ timeout -k 2 12 mipc_wan_cli --at_cmd "$1" >/dev/null 2>&1
+ rc=$?
+ # Keep the verified MIPC close cooldown before the next recovery command.
+ sleep 6
+ return "$rc"
+}
+trap recovery_unlock EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cycle_pdn() {
 	log "vendor recovery stage 1/4: restart PDP"
@@ -95,10 +124,10 @@ cycle_pdn() {
 ps_reattach() {
 	log "vendor recovery stage 2/4: PS re-attach"
 	wait_cli_idle || return 1
-	mipc_wan_cli --at_cmd 'AT+EGREA=1' >/dev/null 2>&1
-	mipc_wan_cli --at_cmd 'AT+EGTYPE=0,1' >/dev/null 2>&1
-	mipc_wan_cli --at_cmd 'AT+EGREA=0' >/dev/null 2>&1
-	mipc_wan_cli --at_cmd 'AT+EGTYPE=4' >/dev/null 2>&1
+	recovery_at 'AT+EGREA=1'
+	recovery_at 'AT+EGTYPE=0,1'
+	recovery_at 'AT+EGREA=0'
+	recovery_at 'AT+EGTYPE=4'
 	sleep 5
 	ifdown modem5g
 	sleep 5
@@ -108,9 +137,9 @@ ps_reattach() {
 restart_radio() {
 	log "vendor recovery stage 3/4: restart radio"
 	wait_cli_idle || return 1
-	mipc_wan_cli --at_cmd 'AT+EFUN=0' >/dev/null 2>&1
+	recovery_at 'AT+EFUN=0'
 	sleep 3
-	mipc_wan_cli --at_cmd 'AT+EFUN=1' >/dev/null 2>&1
+	recovery_at 'AT+EFUN=1'
 	sleep 8
 	ifdown modem5g
 	sleep 5
@@ -140,9 +169,9 @@ rebuild_modem_chain() {
 
 	sleep 3
 	wait_cli_idle || return 1
-	mipc_wan_cli --at_cmd 'AT+CFUN=0' >/dev/null 2>&1
+	recovery_at 'AT+CFUN=0'
 	sleep 2
-	mipc_wan_cli --at_cmd 'AT+CFUN=1' >/dev/null 2>&1
+	recovery_at 'AT+CFUN=1'
 	ubus send modem_ee 2>/dev/null
 	/etc/init.d/mipc_submonitor.init restart
 
@@ -152,24 +181,55 @@ rebuild_modem_chain() {
 }
 
 main() {
-	local state up uptime device failures=0 stage=0
+	local state up uptime device failures=0 stage=0 last_device= last_rx= received=0 service_started
+	service_started=$(mono)
 
 	while true; do
 		sleep "$CHECK_INTERVAL"
+  lg6851f_recovery_reap
 		# A user-triggered band/cell transaction deliberately tears down and
 		# recreates the PDN. Never race it with automatic recovery escalation.
 		[ ! -e "$CONTROL_ACTIVE" ] || { failures=0; stage=0; continue; }
 		state="$(interface_state)"
-		up="$(link_value "$state" '@.up')"
-		uptime="$(link_value "$state" '@.uptime')"
-		device="$(link_value "$state" '@.l3_device')"
+		read_interface_values "$state"
 
-		[ "$up" = "true" ] || { failures=0; continue; }
+		if [ "$up" != "true" ]; then
+			# An unreadable ubus reply is not evidence of a data outage.
+			[ -n "$up" ] || { failures=0; continue; }
+			# A user-requested disconnect is a valid steady state. Only an
+			# unexpected down transition should be recovered automatically.
+			[ ! -e "$USER_DISABLED" ] || { failures=0; stage=0; continue; }
+			# Avoid recovery during early boot and netifd's first PDN setup.
+			[ $(( $(mono) - service_started )) -ge "$SETTLE_TIME" ] || continue
+			failures=$((failures + 1))
+			log "modem5g interface is down or pending ($failures/$FAIL_LIMIT)"
+			[ "$failures" -ge "$FAIL_LIMIT" ] || continue
+			failures=0
+			if ! recovery_lock; then
+				log "another modem recovery is active; postpone this round"
+				continue
+			fi
+			case "$stage" in
+				0) cycle_pdn ; stage=1 ;;
+				1) ps_reattach && stage=2 ;;
+				2) restart_radio && stage=3 ;;
+				*) rebuild_modem_chain && stage=0 ;;
+			esac
+			recovery_unlock
+			sleep "$SETTLE_TIME"
+			continue
+		fi
 		case "$uptime" in ''|*[!0-9]*) continue ;; esac
 		[ "$uptime" -ge "$SETTLE_TIME" ] || continue
-		[ -n "$device" ] || continue
+		case "$device" in ccmni[0-9]|ccmni[0-9][0-9]) ;; *) continue;; esac
 
-		if probe_data_path "$device"; then
+		received=0
+  if read_rx_packets "$device"; then
+   if [ "$device" = "$last_device" ] && [ -n "$last_rx" ] && [ "$RX_PACKETS" -gt "$last_rx" ]; then received=1; fi
+   last_rx=$RX_PACKETS;last_device=$device
+  else last_rx=;last_device=;fi
+  # Recent real RX already proves the same data path. Probe only if idle.
+  if [ "$received" = 1 ] || probe_data_path "$device"; then
 			[ "$failures" -eq 0 ] || log "data path healthy again on $device"
 			failures=0
 			stage=0

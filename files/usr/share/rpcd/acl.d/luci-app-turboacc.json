@@ -1,0 +1,1 @@
+{"luci-app-turboacc":{"description":"Read actual LG6851F acceleration/NAT state and apply validated selections","read":{"ubus":{"luci.turboacc":["status"]}},"write":{"ubus":{"luci.turboacc":["apply","set_nat"]}}}}

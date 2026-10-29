@@ -1,4 +1,49 @@
-'use strict';'require uci';'require rpc';'require validation';'require baseclass';'require firewall';const proto_errors={CONNECT_FAILED:_('Connection attempt failed'),INVALID_ADDRESS:_('IP address is invalid'),INVALID_GATEWAY:_('Gateway address is invalid'),INVALID_LOCAL_ADDRESS:_('Local IP address is invalid'),MISSING_ADDRESS:_('IP address is missing'),MISSING_PEER_ADDRESS:_('Peer address is missing'),NO_DEVICE:_('Network device is not present'),NO_IFACE:_('Unable to determine device name'),NO_IFNAME:_('Unable to determine device name'),NO_WAN_ADDRESS:_('Unable to determine external IP address'),NO_WAN_LINK:_('Unable to determine upstream interface'),PEER_RESOLVE_FAIL:_('Unable to resolve peer host name'),PIN_FAILED:_('PIN code rejected')};const iface_patterns_ignore=[/^wmaster\d+/,/^wifi\d+/,/^hwsim\d+/,/^imq\d+/,/^ifb\d+/,/^mon\.wlan\d+/,/^sit\d+/,/^gre\d+/,/^gretap\d+/,/^ip6gre\d+/,/^ip6tnl\d+/,/^tunl\d+/,/^lo$/];const iface_patterns_wireless=[/^wlan\d+/,/^wl\d+/,/^ath\d+/,/^\w+\.network\d+/];const iface_patterns_virtual=[];const callLuciNetworkDevices=rpc.declare({object:'luci-rpc',method:'getNetworkDevices',expect:{'':{}}});const callLuciWirelessDevices=rpc.declare({object:'luci-rpc',method:'getWirelessDevices',expect:{'':{}}});const callLuciBoardJSON=rpc.declare({object:'luci-rpc',method:'getBoardJSON'});const callLuciHostHints=rpc.declare({object:'luci-rpc',method:'getHostHints',expect:{'':{}}});const callIwinfoAssoclist=rpc.declare({object:'iwinfo',method:'assoclist',params:['device','mac'],expect:{results:[]}});const callIwinfoScan=rpc.declare({object:'iwinfo',method:'scan',params:['device'],nobatch:true,expect:{results:[]}});const callNetworkInterfaceDump=rpc.declare({object:'network.interface',method:'dump',expect:{'interface':[]}});const callNetworkProtoHandlers=rpc.declare({object:'network',method:'get_proto_handlers',expect:{'':{}}});let _init=null;let _state=null;const _protocols={};const _protospecs={};function getProtocolHandlers(){return callNetworkProtoHandlers().then(function(protos){delete protos.bonding;if(!protos.hasOwnProperty('none'))
+'use strict';'require uci';'require rpc';'require lg6851f.wireless_v20261023_53 as sharedWireless';'require validation';'require baseclass';'require firewall';
+// Only slow identity/capability metadata is timed-cached. Interface/device refreshes stay live.
+function cachedNetworkRead(read,ttl){
+ let flight=null,value,valid=false,received=0,retryAt=0,lastError;
+ return function(){
+  if(flight)return flight;
+  if(valid&&Date.now()-received<ttl)return Promise.resolve(value);
+  if(Date.now()<retryAt)return valid?Promise.resolve(value):Promise.reject(lastError);
+  const args=arguments;
+  flight=Promise.resolve().then(()=>read.apply(null,args)).then(result=>{
+   value=result;valid=true;received=Date.now();retryAt=0;return result;
+  }).catch(error=>{
+   lastError=error;retryAt=Date.now()+5000;
+   if(valid)return value;
+   throw error;
+  }).finally(()=>{flight=null;});
+  return flight;
+ };
+}
+function formatWifiRate(rate){
+ if(!rate||rate.rate==null||rate.rate===''||!Number.isFinite(+rate.rate)||+rate.rate<0)return '--';
+ const parts=[`${+rate.rate/1000}\xa0${_('Mbit/s')}`];
+ if(rate.mhz!=null&&Number.isFinite(+rate.mhz)&&+rate.mhz>0)parts.push(`${+rate.mhz}\xa0${_('MHz')}`);
+ const mode=rate.eht?'EHT':rate.he?'HE':rate.vht?'VHT':rate.ht?'HT':null;
+ const nonnegative=value=>value!=null&&value!==''&&Number.isInteger(+value)&&+value>=0;
+ if(mode){
+  if(nonnegative(rate.mcs))parts.push(`${mode=='HT'?'':mode+'-'}MCS\xa0${+rate.mcs}`);
+  if(nonnegative(rate.nss)&&+rate.nss>0)parts.push(`${mode}-NSS\xa0${+rate.nss}`);
+  if((mode=='HT'||mode=='VHT')&&rate.short_gi)parts.push(_('Short GI').replace(/ /g,'\xa0'));
+  const gi=mode=='EHT'?rate.eht_gi:mode=='HE'?rate.he_gi:null;
+  if(nonnegative(gi))parts.push(`${mode}-GI\xa0${+gi}`);
+  if(mode=='HE'&&nonnegative(rate.he_dcm))parts.push(`HE-DCM\xa0${+rate.he_dcm}`);
+  if(mode=='EHT'&&nonnegative(rate.eht_dcm))parts.push(`EHT-DCM\xa0${+rate.eht_dcm}`);
+ }
+ return parts.join(', ');
+}
+
+const proto_errors={CONNECT_FAILED:_('Connection attempt failed'),INVALID_ADDRESS:_('IP address is invalid'),INVALID_GATEWAY:_('Gateway address is invalid'),INVALID_LOCAL_ADDRESS:_('Local IP address is invalid'),MISSING_ADDRESS:_('IP address is missing'),MISSING_PEER_ADDRESS:_('Peer address is missing'),NO_DEVICE:_('Network device is not present'),NO_IFACE:_('Unable to determine device name'),NO_IFNAME:_('Unable to determine device name'),NO_WAN_ADDRESS:_('Unable to determine external IP address'),NO_WAN_LINK:_('Unable to determine upstream interface'),PEER_RESOLVE_FAIL:_('Unable to resolve peer host name'),PIN_FAILED:_('PIN code rejected')};const iface_patterns_ignore=[/^wmaster\d+/,/^wifi\d+/,/^hwsim\d+/,/^imq\d+/,/^ifb\d+/,/^mon\.wlan\d+/,/^sit\d+/,/^gre\d+/,/^gretap\d+/,/^ip6gre\d+/,/^ip6tnl\d+/,/^tunl\d+/,/^lo$/];const iface_patterns_wireless=[/^wlan\d+/,/^wl\d+/,/^ath\d+/,/^\w+\.network\d+/];const iface_patterns_virtual=[];const callLuciNetworkDevices=rpc.declare({object:'luci-rpc',method:'getNetworkDevices',expect:{'':{}}});const callSharedWireless=()=>sharedWireless.read();
+let sharedWirelessData=sharedWireless.cached(),sharedWirelessFlight=null,sharedWirelessAt=0,sharedHostHintsAt=0,sharedHostHintsFlight=null;
+function callLuciWirelessDevices(force){
+ if(!force&&sharedWirelessData&&Date.now()-sharedWirelessAt<1000)return Promise.resolve(sharedWirelessData.radios||{});
+ if(sharedWirelessFlight)return sharedWirelessFlight;
+ sharedWirelessFlight=callSharedWireless().then(data=>{sharedWirelessData=data;sharedWirelessAt=Date.now();return data.radios||{};}).catch(()=>{sharedWirelessData=sharedWireless.cached()||sharedWirelessData||{available:false,radios:{}};sharedWirelessAt=Date.now();return sharedWirelessData.radios||{};}).finally(()=>{sharedWirelessFlight=null;});
+ return sharedWirelessFlight;
+}
+const callLuciBoardJSON=cachedNetworkRead(rpc.declare({object:'luci-rpc',method:'getBoardJSON'}),60000);const callLuciHostHints=cachedNetworkRead(rpc.declare({object:'luci-rpc',method:'getHostHints',expect:{'':{}}}),60000);const callIwinfoAssoclist=rpc.declare({object:'iwinfo',method:'assoclist',params:['device','mac'],expect:{results:[]}});const callIwinfoScan=rpc.declare({object:'iwinfo',method:'scan',params:['device'],nobatch:true,expect:{results:[]}});const callNetworkInterfaceDump=rpc.declare({object:'network.interface',method:'dump',expect:{'interface':[]}});const callNetworkProtoHandlers=cachedNetworkRead(rpc.declare({object:'network',method:'get_proto_handlers',expect:{'':{}}}),60000);let _init=null;let _state=null;const _protocols={};const _protospecs={};function getProtocolHandlers(){return callNetworkProtoHandlers().then(function(protos){delete protos.bonding;if(!protos.hasOwnProperty('none'))
 Object.assign(protos,{none:{no_device:false}});if(!protos.hasOwnProperty('relay')&&L.hasSystemFeature('relayd'))
 Object.assign(protos,{relay:{no_device:true}});Object.assign(_protospecs,protos);return Promise.all(Object.keys(protos).map(function(p){return Promise.resolve(L.require('protocol.%s'.format(p))).catch(function(err){if(L.isObject(err)&&err.name!='NetworkError')
 L.error(err);});})).then(function(){return protos;});}).catch(function(){return{};});}
@@ -52,7 +97,7 @@ return null;let bits=0;for(let i=0,z=false;i<m.length;i++){z=z||!m[i];while(!z&&
 if(m[i])
 return null;}
 return bits;}
-function initNetworkState(refresh){if(_state==null||refresh){const hasWifi=L.hasSystemFeature('wifi');if(refresh||!_init){_init=Promise.all([L.resolveDefault(callNetworkInterfaceDump(),[]),L.resolveDefault(callLuciBoardJSON(),{}),L.resolveDefault(callLuciNetworkDevices(),{}),L.resolveDefault(callLuciWirelessDevices(),{}),L.resolveDefault(callLuciHostHints(),{}),getProtocolHandlers(),L.resolveDefault(uci.load('network')),hasWifi?L.resolveDefault(uci.load('wireless')):L.resolveDefault(),L.resolveDefault(uci.load('luci'))]).then(function([netifd_ifaces,board_json,luci_devs,radios,hosts]){const s={isTunnel:{},isBridge:{},isSwitch:{},isWifi:{},ifaces:netifd_ifaces,radios:radios,hosts:hosts,netdevs:{},bridges:{},switches:{},hostapd:{}};for(let name in luci_devs){const dev=luci_devs[name];if(isVirtualIfname(name))
+function initNetworkState(refresh){if(_state==null||refresh){const hasWifi=L.hasSystemFeature('wifi');if(!_init){_init=Promise.all([L.resolveDefault(callNetworkInterfaceDump(),[]),L.resolveDefault(callLuciBoardJSON(),{}),L.resolveDefault(callLuciNetworkDevices(),{}),L.resolveDefault(callLuciWirelessDevices(),{}),L.resolveDefault(callLuciHostHints(),{}),getProtocolHandlers(),L.resolveDefault(uci.load('network')),hasWifi?L.resolveDefault(uci.load('wireless')):L.resolveDefault(),L.resolveDefault(uci.load('luci'))]).then(function([netifd_ifaces,board_json,luci_devs,radios,hosts]){const s={isTunnel:{},isBridge:{},isSwitch:{},isWifi:{},ifaces:netifd_ifaces,radios:radios,hosts:hosts,netdevs:{},bridges:{},switches:{},hostapd:{}};for(let name in luci_devs){const dev=luci_devs[name];if(isVirtualIfname(name))
 s.isTunnel[name]=true;if(!s.isTunnel[name]&&isIgnoredIfname(name))
 continue;s.netdevs[name]=s.netdevs[name]||{idx:dev.ifindex,name:name,rawname:name,flags:dev.flags,link:dev.link,stats:dev.stats,macaddr:dev.mac,pse:dev?.pse,type:dev.type,devtype:dev.devtype,mtu:dev.mtu,qlen:dev.qlen,wireless:dev.wireless,parent:dev.parent,ipaddrs:[],ip6addrs:[]};if(Array.isArray(dev.ipaddrs))
 for(let ip of dev.ipaddrs)
@@ -75,14 +120,14 @@ port.label='%s %d'.format(role.toUpperCase(),pnum++);else
 port.label=role.toUpperCase();delete port.role;delete port.index;}
 s.switches[switchname]={ports:ports,netdevs:netdevs};}}}
 if(L.isObject(board_json.dsl)&&L.isObject(board_json.dsl.modem)){s.hasDSLModem=board_json.dsl.modem;}
-_init=null;const objects=[];if(L.isObject(s.radios))
+const objects=[];if(L.isObject(s.radios))
 for(let radio in s.radios)
 if(L.isObject(s.radios[radio])&&Array.isArray(s.radios[radio].interfaces))
 for(let ri of s.radios[radio].interfaces)
 if(L.isObject(ri)&&ri.ifname)
 objects.push('hostapd.%s'.format(ri.ifname));return(objects.length?L.resolveDefault(rpc.list.apply(rpc,objects),{}):Promise.resolve({})).then(function(res){for(let k in res){const m=k.match(/^hostapd\.(.+)$/);if(m)
 s.hostapd[m[1]]=res[k];}
-return(_state=s);});});}}
+return(_state=s);});}).finally(function(){_init=null;});}}
 if(refresh)
 return _init;return(_state!=null?Promise.resolve(_state):_init);}
 function ifnameOf(obj){if(obj instanceof Protocol)
@@ -113,7 +158,17 @@ if(networks[ifstate.interface]==null)
 networks[ifstate.interface]=this.instantiateNetwork(ifstate.interface,ifstate.proto);const rv=[];for(let network in networks)
 if(networks.hasOwnProperty(network))
 rv.push(networks[network]);rv.sort(networkSort);return rv;}
-let Hosts,Network,Protocol,Device,WifiDevice,WifiNetwork,WifiVlan;Network=baseclass.extend({prefixToMask:prefixToMask,maskToPrefix:maskToPrefix,formatWifiEncryption:formatWifiEncryption,flushCache(){initNetworkState(true);return _init;},getProtocol(protoname,netname){const v=_protocols[protoname];if(v!=null)
+let Hosts,Network,Protocol,Device,WifiDevice,WifiNetwork,WifiVlan;Network=baseclass.extend({refreshSharedWifi(){
+ return initNetworkState().then(()=>callLuciWirelessDevices(true)).then(radios=>{
+  if(_state)_state.radios=radios;
+  // DHCP names/IPs already arrive in the snapshot. Host hints are optional and slow-cached.
+  if(_state&&!sharedHostHintsFlight&&Date.now()-sharedHostHintsAt>=60000){
+   sharedHostHintsAt=Date.now();
+   sharedHostHintsFlight=callLuciHostHints().then(hosts=>{if(_state)_state.hosts=hosts||{};}).catch(()=>{}).finally(()=>{sharedHostHintsFlight=null;});
+  }
+  return sharedWirelessData;
+ });
+},getSharedWifiStatus(){return sharedWirelessData||sharedWireless.cached()||{fresh:false,partial:true};},formatWifiRate:formatWifiRate,prefixToMask:prefixToMask,maskToPrefix:maskToPrefix,formatWifiEncryption:formatWifiEncryption,flushCache(){initNetworkState(true);return _init;},getProtocol(protoname,netname){const v=_protocols[protoname];if(v!=null)
 return new v(netname||'__dummy__');return null;},getProtocols(){const rv=[];for(let protoname in _protocols)
 rv.push(new _protocols[protoname]('__dummy__'));return rv;},registerProtocol(protoname,methods){const spec=L.isObject(_protospecs)?_protospecs[protoname]:null;const proto=Protocol.extend(Object.assign({getI18n(){return protoname;},isFloating(){return false;},isVirtual(){return(L.isObject(spec)&&spec.no_device==true);},renderFormOptions(section){}},methods,{__init__(name){this.sid=name;},getProtocol(){return protoname;}}));_protocols[protoname]=proto;return proto;},registerPatternVirtual(pat){iface_patterns_virtual.push(pat);},registerErrorCode(code,message){if(typeof(code)=='string'&&typeof(message)=='string'&&!proto_errors.hasOwnProperty(code)){proto_errors[code]=message;return true;}
 return false;},addNetwork(name,options){return this.getNetwork(name).then(L.bind(function(existingNetwork){if(name!=null&&/^[a-zA-Z0-9_]+$/.test(name)&&existingNetwork==null){const sid=uci.add('network','interface',name);if(sid!=null){if(L.isObject(options))
@@ -207,7 +262,13 @@ return new(Device.extend(extend))(name,network);return new Device(name,network);
 else{res=getWifiStateByIfname(netname);if(res!=null){radioname=res[0];radiostate=res[1];netstate=res[2];sid=netstate.section;netid=L.toArray(getWifiNetidBySid(sid))[0];}
 else{res=getWifiStateBySid(netname);if(res!=null){radioname=res[0];radiostate=res[1];netstate=res[2];sid=netname;netid=L.toArray(getWifiNetidBySid(sid))[0];}
 else{res=getWifiNetidBySid(netname);if(res!=null){netid=res[0];radioname=res[1];sid=netname;}}}}
-return this.instantiateWifiNetwork(sid||netname,radioname,radiostate,netid,netstate,netstate?_state.hostapd[netstate.ifname]:null);},getIfnameOf(obj){return ifnameOf(obj);},getDSLModemType(){return initNetworkState().then(function(){return _state.hasDSLModem?_state.hasDSLModem.type:null;});},getHostHints(){return initNetworkState().then(function(){return new Hosts(_state.hosts);});}});Hosts=baseclass.extend({__init__(hosts){this.hosts=hosts;},getHostnameByMACAddr(mac){return this.hosts[mac]?(this.hosts[mac].name||null):null;},getIPAddrByMACAddr(mac){return this.hosts[mac]?(L.toArray(this.hosts[mac].ipaddrs||this.hosts[mac].ipv4)[0]||null):null;},getIP6AddrByMACAddr(mac){return this.hosts[mac]?(L.toArray(this.hosts[mac].ip6addrs||this.hosts[mac].ipv6)[0]||null):null;},getHostnameByIPAddr(ipaddr){for(let mac in this.hosts){if(this.hosts[mac].name==null)
+return this.instantiateWifiNetwork(sid||netname,radioname,radiostate,netid,netstate,netstate?_state.hostapd[netstate.ifname]:null);},getIfnameOf(obj){return ifnameOf(obj);},getDSLModemType(){return initNetworkState().then(function(){return _state.hasDSLModem?_state.hasDSLModem.type:null;});},getHostHints(){return initNetworkState().then(function(){return new Hosts(_state.hosts);});}});Hosts=baseclass.extend({__init__(hosts){
+ this.hosts=Object.create(null);
+ for(const mac of Object.keys(hosts||{})){
+  if(/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac)&&hosts[mac]&&typeof hosts[mac]=='object')
+   this.hosts[mac.toUpperCase()]=hosts[mac];
+ }
+},_entry(mac){return this.hosts[String(mac||'').toUpperCase()];},getHostnameByMACAddr(mac){const host=this._entry(mac);return host?(host.name||null):null;},getIPAddrByMACAddr(mac){const host=this._entry(mac);return host?(L.toArray(host.ipaddrs||host.ipv4)[0]||null):null;},getIP6AddrByMACAddr(mac){const host=this._entry(mac);return host?(L.toArray(host.ip6addrs||host.ipv6)[0]||null):null;},getHostnameByIPAddr(ipaddr){for(let mac in this.hosts){if(this.hosts[mac].name==null)
 continue;const addrs=L.toArray(this.hosts[mac].ipaddrs||this.hosts[mac].ipv4);for(let a of addrs)
 if(a==ipaddr)
 return this.hosts[mac].name;}
@@ -338,7 +399,7 @@ return null;return this.ubus('net','config','mesh_id')||this.get('mesh_id');},ge
 ifname=this.netid;return ifname;},getVlanIfnames(){const vlans=L.toArray(this.ubus('net','vlans'));const ifnames=[];for(let v of vlans)
 ifnames.push(v['ifname']);return ifnames;},getWifiDeviceName(){return this.ubus('radio')||this.get('device');},getWifiDevice(){const radioname=this.getWifiDeviceName();if(radioname==null)
 return Promise.reject();return Network.prototype.getWifiDevice(radioname);},isUp(){const device=this.getDevice();if(device==null)
-return false;return device.isUp();},getActiveMode(){const mode=this.ubus('net','iwinfo','mode')||this.getMode();switch(mode){case'ap':return'Master';case'sta':return'Client';case'adhoc':return'Ad-Hoc';case'mesh':return'Mesh Point';case'monitor':return'Monitor';default:return mode;}},getActiveModeI18n(){const mode=this.getActiveMode();switch(mode){case'Master':return _('Access Point');case'Ad-Hoc':return _('Ad-Hoc');case'Client':return _('Client');case'Monitor':return _('Monitor');case'Master(VLAN)':return _('Master (VLAN)');case'WDS':return _('WDS');case'Mesh Point':return _('Mesh Point');case'P2P Client':return _('P2P Client');case'P2P Go':return _('P2P Go');case'Unknown':return _('Unknown');default:return mode;}},getActiveSSID(){return this.ubus('net','iwinfo','ssid')||this.ubus('net','config','ssid')||this.get('ssid');},getActiveBSSID(){return this.ubus('net','iwinfo','bssid')||this.ubus('net','config','bssid')||this.get('bssid');},getActiveEncryption(){return formatWifiEncryption(this.ubus('net','iwinfo','encryption'))||'-';},getAssocList(){const tasks=[];let station;for(let vlan of this.getVlans())
+return false;return device.isUp();},getActiveMode(){const mode=this.ubus('net','iwinfo','mode')||this.getMode();switch(mode){case'ap':return'Master';case'sta':return'Client';case'adhoc':return'Ad-Hoc';case'mesh':return'Mesh Point';case'monitor':return'Monitor';default:return mode;}},getActiveModeI18n(){const mode=this.getActiveMode();switch(mode){case'Master':return _('Access Point');case'Ad-Hoc':return _('Ad-Hoc');case'Client':return _('Client');case'Monitor':return _('Monitor');case'Master(VLAN)':return _('Master (VLAN)');case'WDS':return _('WDS');case'Mesh Point':return _('Mesh Point');case'P2P Client':return _('P2P Client');case'P2P Go':return _('P2P Go');case'Unknown':return _('Unknown');default:return mode;}},getActiveSSID(){return this.ubus('net','iwinfo','ssid')||this.ubus('net','config','ssid')||this.get('ssid');},getActiveBSSID(){return this.ubus('net','iwinfo','bssid')||this.ubus('net','config','bssid')||this.get('bssid');},getActiveEncryption(){return formatWifiEncryption(this.ubus('net','iwinfo','encryption'))||'-';},getAssocList(){if(uci.get('wireless',this.getWifiDeviceName(),'type')=='vendor618'){const snapshot=sharedWirelessData;const device=this.getDevice();if(device?._devstate('flags','up')===false||this.isDisabled())return Promise.resolve([]);return Promise.resolve(snapshot?.available?(snapshot.clients||[]).filter(c=>c.ifname==this.getIfname()):[]);}const tasks=[];let station;for(let vlan of this.getVlans())
 tasks.push(callIwinfoAssoclist(vlan.getIfname()).then(function(stations){for(station of stations)
 station.vlan=vlan;return stations;}));tasks.push(callIwinfoAssoclist(this.getIfname()));return Promise.all(tasks).then(function(values){return Array.prototype.concat.apply([],values);});},getVlans(){const vlans=[];const vlans_ubus=this.ubus('net','vlans');if(vlans_ubus)
 for(let vlan of vlans_ubus)

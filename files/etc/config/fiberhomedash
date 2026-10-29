@@ -1,12 +1,12 @@
 
 config fiberhomedash 'main'
 	option enabled '1'
-	option refresh_interval '2'
-	option traffic_interval '3'
+	option refresh_interval '5'
+	option traffic_interval '2'
 	option info_interval '10'
 	option mobile_max '30'
 	option traffic_threshold '32768'
-	option at_interval '3'
+	option at_interval '25'
 	option at_slow_interval '60'
-	option watch_timeout '180'
+	option watch_timeout '45'
 

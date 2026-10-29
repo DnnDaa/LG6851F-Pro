@@ -17,6 +17,20 @@ config_get orange_max_ms main orange_max_ms 500
 config_get good_rsrp main good_rsrp -95
 config_get fair_rsrp main fair_rsrp -110
 
+# Invalid UCI intervals must not create a zero-sleep busy loop or octal error.
+normalize_interval() {
+ local value="$1" fallback="$2" minimum="$3" maximum="$4"
+ case "$value" in ''|*[!0-9]*) value="$fallback";; esac
+ [ "${#value}" -le 6 ] || value="$fallback"
+ while [ "${value#0}" != "$value" ] && [ "${#value}" -gt 1 ]; do value=${value#0}; done
+ [ "$value" -ge "$minimum" ] || value="$minimum"
+ [ "$value" -le "$maximum" ] || value="$maximum"
+ printf '%s' "$value"
+}
+start_delay=$(normalize_interval "$start_delay" 30 0 120)
+poll_seconds=$(normalize_interval "$poll_seconds" 5 5 60)
+ping_interval=$(normalize_interval "$ping_interval" 15 15 300)
+
 
 OVERRIDE_FILE=/tmp/lg6851f-led-overrides
 OVERRIDE_TEXT='|'
@@ -69,13 +83,16 @@ wired_state() {
 }
 
 wifi_state() {
-	local netdev master state
+	local netdev state
 	for netdev in /sys/class/net/phy*-ap* /sys/class/net/ra0 /sys/class/net/rai0; do
 		[ -e "$netdev" ] || continue
 		state=;IFS= read -r state < "$netdev/operstate"
-		master="$(readlink -f "$netdev/master" 2>/dev/null)"
-		case "$state:$master" in
-			up:*/br-lan|unknown:*/br-lan) return 0 ;;
+		case "$state" in
+			up|unknown)
+				# Built-in inode comparison follows the bridge symlink.
+				# Avoid spawning readlink for every LED poll.
+				[ "$netdev/master" -ef /sys/class/net/br-lan ] && return 0
+			;;
 		esac
 	done
 	return 1

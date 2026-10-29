@@ -2,7 +2,7 @@
 
 'use strict';
 
-import { popen, readfile } from 'fs';
+import { popen, readfile, unlink, writefile } from 'fs';
 import { cursor } from 'uci';
 
 const CLI = '/usr/bin/mipc_wan_cli';
@@ -11,6 +11,7 @@ const SMSCLI = '/usr/bin/modem5g-sms-send';
 const LOCKCLI = '/usr/bin/lg6851f-modem-lock';
 const STATE = '/tmp/lg6851f-modem-status.state';
 const LOCKSTATE = '/etc/modem5g-lock.state';
+const USER_DISABLED = '/tmp/lg6851f-modem-user-disabled';
 
 function board_ok() {
 	return trim(readfile('/tmp/sysinfo/board_name') || '') == 'fiberhome,lg6851f';
@@ -24,7 +25,7 @@ function capture(argv, seconds) {
 	let command = `/usr/bin/timeout ${seconds || 12} ${join(' ', map(argv, quote))} 2>&1`;
 	let pipe = popen(command, 'r');
 	let output = pipe?.read?.('all') || '';
-	let code = pipe?.close?.();
+	let code = pipe?.close?.() ?? 1;
 	return { output: trim(output), code: code || 0 };
 }
 
@@ -55,7 +56,7 @@ function cli(option, arg) {
 	for (let attempt = 0; attempt < 3; attempt++) {
 		let pipe = popen(command, 'r');
 		output = pipe?.read?.('all') || '';
-		code = pipe?.close?.();
+		code = pipe?.close?.() ?? 1;
 		if (index(output, '__MODEM_LOCK_BUSY__') < 0)
 			break;
 		if (attempt < 2)
@@ -71,7 +72,17 @@ function cli(option, arg) {
 
 function data_action(name) {
  if(length(readfile('/tmp/lg6851f-modem-control.active')||''))return {code:75,error:'正在应用模组锁定设置，请稍后控制拨号'};
- return capture(['/sbin/'+name,'modem5g'],20);
+ let disconnecting = (name == 'ifdown');
+ if (disconnecting)
+  writefile(USER_DISABLED, '1\n');
+ let result = capture(['/sbin/'+name,'modem5g'],20);
+ if (!result.code) {
+  if (!disconnecting)
+   unlink(USER_DISABLED);
+ }
+ else if (disconnecting)
+  unlink(USER_DISABLED);
+ return result;
 }
 function valid_at(command) {
 	return type(command) == 'string' && length(command) >= 2 && length(command) <= 512 &&
@@ -192,8 +203,12 @@ function control_summary() {
  }
  let nw=match(raw,/The current nwomde:\s*(QL_NW_MODE_[A-Z0-9_]+)/),nr=match(raw,/The current NR Disable Mode:\s*([A-Z_]+)/);
  if(nw)push(short,'The current nwomde:\n'+nw[1]);if(nr)push(short,'The current NR Disable Mode:\n'+nr[1]);
- let state=kv(full.request),bootstate=kv(readfile('/tmp/lg6851f-modem-boot-lock.state'));
- return {job:job,raw:join('\n',short),request:full.request,boot:full.boot,
+ let state=kv(full.request),bootstate=kv(readfile('/tmp/lg6851f-modem-boot-lock.state')),request=[];
+ for (let k in ['MODE','BOOT_ID','STATUS','LTE','NR','RAT','BAND','ARFCN','PCI','VERIFIED_LTE_MASK','VERIFIED_NR_MASK','VERIFIED_SERVING_ARFCN','VERIFIED_SERVING_PCI'])
+  if(state[k]!=null)push(request,k+'='+state[k]);
+ let phase=kv(readfile('/tmp/lg6851f-modem-ui-job.phase'));
+ if(phase.ID==job.ID)job.PHASE=phase.PHASE;
+ return {job:job,raw:join('\n',short),request:join('\n',request),boot:full.boot,
   cache_age:job.UPDATED?time()-+job.UPDATED:null,profile:boot_profile(),boot_restore:bootstate,
   log:job.STATUS=='error'?substr(full.log || '',-1600):'',
   lock_record:{mode:state.MODE || 'none',confirmed_this_boot:state.BOOT_ID==full.boot && state.STATUS=='verified',rat:state.RAT,band:state.BAND,arfcn:state.ARFCN,pci:state.PCI},
@@ -324,7 +339,19 @@ const methods = {
 		return launch_lock([ 'set-cell', arfcnText, pciText, rat, '' + band ]);
 	} },
 	clear_cell_lock: { call: function() { return launch_lock([ 'clear-cell' ]); } },
-	set_radio: { args: { enabled: true }, call: function(req) { return cli('nw_radio_state_set', req.args?.enabled ? '1' : '0'); } },
+	set_radio: { args: { enabled: true }, call: function(req) {
+		let enabled = !!req.args?.enabled;
+		if (!enabled)
+			writefile(USER_DISABLED, '1\n');
+		let result = cli('nw_radio_state_set', enabled ? '1' : '0');
+		if (!result.code) {
+			if (enabled)
+				unlink(USER_DISABLED);
+		}
+		else if (!enabled)
+			unlink(USER_DISABLED);
+		return result;
+	} },
 	set_rat: { args: { mode: 21 }, call: function(req) {
 		let mode = +req.args?.mode;
 		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };

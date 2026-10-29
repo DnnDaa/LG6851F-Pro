@@ -56,6 +56,8 @@ export function traffic_sample(db,sample) {
  }
  db.last_day=date;
  if(!db.since || db.since<1735689600)db.since=sample.now;
+ // A new day or transfer of pending bytes changes accounting even at zero delta.
+ if(db.days[date]==null || db.pending.rx>0 || db.pending.tx>0)db.dirty=true;
  let row=db.days[date] ?? {rx:0,tx:0};
  row.rx+=rx+db.pending.rx;row.tx+=tx+db.pending.tx;db.pending={rx:0,tx:0};
  db.days[date]=row;
@@ -63,6 +65,22 @@ export function traffic_sample(db,sample) {
  let day_keys=sort(keys(db.days));
  while(length(day_keys)>740) { let old=shift(day_keys);delete db.days[old];delete db.adjustments[old]; }
  return db;
+}
+// Cap enforcement needs current-cycle totals only, not sorted history arrays.
+export function traffic_current(db,date,settings) {
+ let cycle=cycle_for(date,settings.cycle_day),rx=0,tx=0;
+ for(let day,entry in db.days)if(day>=cycle.start && day<cycle.next){rx+=entry.rx;tx+=entry.tx;}
+ let adj=number(db.adjustments[cycle.start],0),used=max(0,rx+tx+adj+db.pending.rx+db.pending.tx);
+ cycle.rx=rx;cycle.tx=tx;cycle.adj=adj;cycle.used=used;cycle.days_left=max(0,serial(cycle.next)-serial(date)-1);
+ let cap=number(settings.cap_bytes,0),warn=number(settings.warn_percent,90);
+ let level=cap<=0?'none':used>=cap?'over':used*100>=cap*warn?'warn':'ok';
+ return {cycle:cycle,cap:{bytes:cap,warn:warn,level:level,cut_enabled:settings.cut_enabled==1,cut_active:!!db.cut_cycle}};
+}
+export function cached_counters(cache,name,now) {
+ let age=now-number(cache?.ts,-1),entry=cache?.counters?.[name];
+ if(cache?.mobile_if!=name || age<0 || age>20 || type(entry)!='object')return null;
+ if(number(entry.rx,-1)<0 || number(entry.tx,-1)<0)return null;
+ return entry;
 }
 export function traffic_summary(db,date,settings) {
  let cycle=cycle_for(date,settings.cycle_day),list=[],cycles={},rx=0,tx=0;

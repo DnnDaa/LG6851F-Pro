@@ -222,10 +222,15 @@
 		</style>
 		{% endif %}
 		{% if (!blank_page): %}
-		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
-		<script src="{{ resource }}/cbi.js?v=1.4.0"></script>
+		{% if (dispatcher.lang == 'zh-cn'): %}
+		<script src="{{ resource }}/translations/zh-cn_v20261026_72.js"></script>
+		{% else %}
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}?v=lg6851f72"></script>
 		{% endif %}
-	</head>
+		<script src="{{ resource }}/cbi.js?v=lg6851f92"></script>
+		{% endif %}
+	<link rel="stylesheet" href="{{ resource }}/lg6851f/ui_unified_v20261017_2.css">
+</head>
 
 	<body class="lang_{{ dispatcher.lang }}" data-page="{{ entityencode(page, true) }}" data-nav-type="{{ nav_type }}" data-asset-version="1.4.0"{% if (!blank_page): %} data-nav-stamp="{{ entityencode(join(':', [nav_type, dispatcher.lang, ctx?.authuser ?? '']), true) }}:1.4.0"{% endif %}{% if (length(patch_all)): %} data-patches="{{ entityencode(join(' ', patch_all), true) }}"{% endif %}{% if (blank_page ? tokens.struct_login_bg : tokens.struct_main_bg): %} data-bg{% endif %}>
 		{% if (!blank_page): %}

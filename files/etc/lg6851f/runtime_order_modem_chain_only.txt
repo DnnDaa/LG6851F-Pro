@@ -20,7 +20,7 @@ Userspace:
 10. mipc_wan.init / netifd ql_mipc or mipc
 11. mdlogger
 12. scd
-13. ql_ippt / ql_speed_monitor_mgr optional
+13. ql_ippt optional; legacy traffic monitor removed
 
 WiFi7:
 - OpenWrt mainline only.

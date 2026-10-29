@@ -1,99 +1,79 @@
 #!/bin/sh
-
-# FiberHome LG6851F / MT6990 network steering.
-#
-# This is the sole LG6851F policy implementation and is invoked by netifd's
-# platform/packet-steering.sh hook.  The stock MT6990 CPE image uses
-# /sbin/smp.sh to keep Ethernet RX, TX,
-# DPMAIF/CCIF and Wi-Fi work on separate CPUs and enables RPS on every LAN
-# receive path.  Upstream OpenWrt's generic packet steering sees only the
-# single RX queue exposed by the 6.18 Ethernet driver and otherwise pins that
-# queue to one CPU.  Under simultaneous 5G download/upload that single softnet
-# backlog overflows and is accounted as eth0 rx_dropped.
-
-TAG="MT6990-NET-AFFINITY"
-
-board_is_lg6851f()
-{
-	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "fiberhome,lg6851f" ]
+# MT6990 four-core policy. Event driven, no polling or success logging.
+# Stock smp.sh puts DPMAIF on CPU0, CCIF data/TX on CPU3, and CCMNI RPS
+# on CPU1/2. Keep the proven local WED split (CPU1/2) independently.
+scope=all
+device=
+case "${1:-}" in
+ '') [ "$#" = 0 ] || exit 2;;
+ --wifi-irqs) [ "$#" = 1 ] || exit 2; scope=wifi;;
+ --interface)
+  [ "$#" = 2 ] || exit 2
+  case "$2" in ''|*[!A-Za-z0-9_.:-]*) exit 2;; esac
+  device=$2
+  case "$device" in eth0|eth1) ;;
+   ccmni*) suffix=${device#ccmni}; case "$suffix" in ''|*[!0-9]*) exit 0;; esac;;
+   *) exit 0;;
+  esac;;
+ *) exit 2;;
+esac
+IFS= read -r board < /tmp/sysinfo/board_name || exit 0
+[ "$board" = fiberhome,lg6851f ] || exit 0
+IFS= read -r online < /sys/devices/system/cpu/online || exit 0
+[ "$online" = 0-3 ] || exit 0
+result=0
+set_mask() {
+ local path="$1" mask="$2" current
+ [ -w "$path" ] || return 0
+ current=
+ IFS= read -r current < "$path"
+ case "$current" in "$mask"|0000000"$mask") return 0;; esac
+ printf '%s' "$mask" > "$path" || result=1
 }
-
-set_irq_mask()
-{
-	local irq="$1"
-	local mask="$2"
-
-	[ -n "$irq" ] || return 0
-	[ -w "/proc/irq/$irq/smp_affinity" ] || return 0
-	echo "$mask" > "/proc/irq/$irq/smp_affinity" 2>/dev/null
+# /proc/irq/<n>/actions does not exist on this kernel. Resolve names and
+# physical GIC numbers from one snapshot instead of scanning every IRQ.
+plan=$(awk -v scope="$scope" '
+ $1 ~ /^[0-9]+:$/ {
+  mask=""; name=$NF
+  if(name=="mt7990-wed")mask="2"
+  else if(name=="mt7991-wed")mask="4"
+  else if(name ~ /^mt7996e(-hif)?$/)mask="4"
+  else if(scope!="wifi") {
+   if(name=="DPMAIF_AP")mask="1"
+   else if(name=="CCIF_AP_DATA")mask="8"
+   else if(name ~ /ethernet/) for(i=2;i<NF;i++)if($i=="GICv3") {
+    h=$(i+1)
+    if(h==440)mask="8"
+    else if(h==432 || h==433)mask="2"
+    else if(h==434 || h==435)mask="4"
+    break
+   }
+  }
+  if(mask!=""){sub(/:$/,"",$1);print $1,mask}
+ }' /proc/interrupts) || exit 1
+while read -r irq mask; do
+ [ -n "$irq" ] || continue
+ set_mask "/proc/irq/$irq/smp_affinity" "$mask"
+done <<EOF
+$plan
+EOF
+[ "$scope" != wifi ] || exit "$result"
+set_device() {
+ local dev="$1" mask queue suffix
+ case "$dev" in eth0|eth1) mask=f;;
+  ccmni*) suffix=${dev#ccmni}; case "$suffix" in ''|*[!0-9]*) return;; esac; mask=6;;
+  *) return;;
+ esac
+ for queue in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+  set_mask "$queue" "$mask"
+ done
 }
-
-set_gic_hwirq_mask()
-{
-	local hwirq="$1"
-	local mask="$2"
-	local irq
-
-	irq="$(awk -v h="$hwirq" '
-		$0 ~ ("GICv3[[:space:]]+" h "[[:space:]]") {
-			gsub(":", "", $1); print $1; exit
-		}' /proc/interrupts 2>/dev/null)"
-	set_irq_mask "$irq" "$mask"
-}
-
-set_action_mask()
-{
-	local pattern="$1"
-	local mask="$2"
-	local actions irq
-
-	for actions in /proc/irq/*/actions; do
-		[ -r "$actions" ] || continue
-		grep -Eq "$pattern" "$actions" 2>/dev/null || continue
-		irq="${actions#/proc/irq/}"
-		irq="${irq%/actions}"
-		set_irq_mask "$irq" "$mask"
-	done
-}
-
-set_rps_mask()
-{
-	local ifname="$1"
-	local mask="$2"
-	local queue
-
-	for queue in /sys/class/net/"$ifname"/queues/rx-*/rps_cpus; do
-		[ -w "$queue" ] || continue
-		echo "$mask" > "$queue" 2>/dev/null
-	done
-}
-
-apply_affinity()
-{
-	board_is_lg6851f || return 0
-
-	# Stock MT6990_CPE split: Ethernet TX on CPU3, RX rings on CPU1/CPU2.
-	set_gic_hwirq_mask 440 8
-	set_gic_hwirq_mask 432 2
-	set_gic_hwirq_mask 433 2
-	set_gic_hwirq_mask 434 4
-	set_gic_hwirq_mask 435 4
-
-	# Keep modem ingress on CPU0, modem control on CPU3 and both MT7990 PCIe
-	# functions on CPU2, matching the stock two-radio CPE policy.
-	set_action_mask '^DPMAIF_AP$' 1
-	set_action_mask '^CCIF_AP_DATA$' 8
-	set_action_mask '^mt7996e(-hif)?$' 4
-
-	# Current 6.18 Ethernet exposes one RX queue.  Spread its softnet work over
-	# all four CPUs; spread the active modem data interface over CPU1 and CPU2.
-	set_rps_mask eth0 f
-	set_rps_mask eth1 f
-	set_rps_mask ccmni0 6
-	set_rps_mask ccmni1 6
-	set_rps_mask ccmni2 6
-
-	logger -t "$TAG" "applied stock CPE IRQ split and RPS policy"
-}
-
-apply_affinity
+if [ -n "$device" ]; then
+ set_device "$device"
+else
+ for node in /sys/class/net/eth[01] /sys/class/net/ccmni*; do
+  [ -d "$node" ] || continue
+  set_device "${node##*/}"
+ done
+fi
+exit "$result"

@@ -1,0 +1,3 @@
+# OEM libql_uinf logging: NOTICE and more severe; normal RAM log remains.
+config logging 'uinf'
+	option log_level '5'

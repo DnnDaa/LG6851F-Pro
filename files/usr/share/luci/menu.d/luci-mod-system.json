@@ -159,7 +159,7 @@
     "order": 60,
     "action": {
       "type": "view",
-      "path": "system/lg6851f-led_v20261015_1"
+      "path": "system/lg6851f-led_ui_v20261017_1"
     },
     "depends": {
       "acl": [

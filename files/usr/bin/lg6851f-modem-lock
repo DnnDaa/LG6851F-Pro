@@ -14,10 +14,22 @@ readonly CLI=/usr/bin/mipc_wan_cli
 readonly LTE_ALLOWED='1 3 5 7 8 20 28 32 38 40 41 42 43 46'
 readonly NR_ALLOWED='1 3 5 7 8 20 28 38 40 41 75 76 77 78'
 
+ . /lib/functions/lg6851f-modem-guard.sh
+
 TRANSACTION=0
 WAS_UP=false
 RECOVERY_OWNED=0
 NETWORK_RESTORED=0
+
+# A phase file is used only for jobs explicitly started by the web worker.
+# It never changes the modem protocol or adds polling on the native interface.
+progress() {
+ [ -n "${LG6851F_UI_JOB_ID:-}" ] || return 0
+ printf 'ID=%s\nPHASE=%s\n' "$LG6851F_UI_JOB_ID" "$1" > /tmp/lg6851f-modem-ui-job.phase.new &&
+  mv /tmp/lg6851f-modem-ui-job.phase.new /tmp/lg6851f-modem-ui-job.phase
+}
+# Read current/supported masks and mode before releasing this same RIL session.
+snapshot_tail() { printf '19\n0\n19\n1\n54\n55\n1\n-1\n'; }
 
 die() { echo "ERROR=$*"; exit 22; }
 
@@ -96,12 +108,8 @@ wait_network_up() {
 }
 
 begin_transaction() {
-	waited=0
-	while ! /bin/mkdir "$RECOVERY_LOCK" 2>/dev/null; do
-		[ "$waited" -lt 60 ] || { echo 'ERROR=automatic modem recovery is active'; return 75; }
-		/bin/sleep 1; waited=$((waited + 1))
-	done
-	RECOVERY_OWNED=1
+	progress preparing
+ [ "$RECOVERY_OWNED" = 1 ] || return 75
 	WAS_UP="$(network_up)"
 	TRANSACTION=1
 	printf 'PID=%s\nSTARTED=%s\n' "$$" "$(date +%s)" >"$ACTIVE"
@@ -112,12 +120,14 @@ begin_transaction() {
 			/bin/sleep 1; waited=$((waited + 1))
 		done
 	fi
-	wait_cli_idle
+	wait_cli_idle || return $?
+	progress applying
 }
 
 restore_network() {
 	rc="$1"
 	if [ "${WAS_UP:-false}" = true ] && [ "$NETWORK_RESTORED" -eq 0 ]; then
+		progress recovering
 		/sbin/ifup modem5g >/dev/null 2>&1 || rc=70
 		wait_network_up || rc=$?
 		[ "$rc" -ne 0 ] || NETWORK_RESTORED=1
@@ -129,7 +139,7 @@ end_transaction() {
 	rc="$1"
 	restore_network "$rc"; rc=$?
 	/bin/rm -f "$ACTIVE"
-	/bin/rmdir "$RECOVERY_LOCK" 2>/dev/null || true
+	lg6851f_recovery_leave
 	RECOVERY_OWNED=0
 	TRANSACTION=0
 	return "$rc"
@@ -141,7 +151,7 @@ cleanup() {
 		/bin/rm -f "$ACTIVE"
 	fi
 	if [ "$RECOVERY_OWNED" -eq 1 ]; then
-		/bin/rmdir "$RECOVERY_LOCK" 2>/dev/null || true
+		lg6851f_recovery_leave
 		RECOVERY_OWNED=0
 	fi
 }
@@ -159,6 +169,7 @@ report_state() {
 }
 
 verify_cell() {
+	progress verifying
 	wanted_arfcn="$1" wanted_pci="$2" deadline=$(($(date +%s) + 60))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
 		raw="$(/usr/bin/timeout 8 "$CLI" --at_cmd 'AT+ECELL' 2>/dev/null)"
@@ -178,9 +189,8 @@ verify_cell() {
 
 verify_bands() {
 	wanted_lte="$1" wanted_nr="$2"
-	actual="$(printf '0\n19\n0\n1\n-1\n' | run_sample)"; rc=$?
-	printf '%s\n' "$actual"
-	[ "$rc" -eq 0 ] || return "$rc"
+	actual="$3"
+	# The write session already returned the authoritative masks; do not open a second RIL session.
 	lte_mask="$(printf '%s\n' "$actual" | sed -n 's/.*lte band info[[:space:]]*=[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | head -n 1)"
 	nr_mask="$(printf '%s\n' "$actual" | sed -n 's/.*nr band info[[:space:]]*=[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | head -n 1)"
 	[ -n "$lte_mask" ] && [ -n "$nr_mask" ] || { echo 'ERROR=unable to read applied band masks'; return 5; }
@@ -202,26 +212,36 @@ save_state() {
 }
 
 action="${1:-}"
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# All mutators take recovery first, then the MIPC channel. This is the same
+# order as the watchdog and avoids a circular wait between the two writers.
+if [ "$action" != get ]; then
+ lg6851f_recovery_enter || { echo 'ERROR=automatic modem recovery is active'; exit 75; }
+ RECOVERY_OWNED=1
+fi
 exec 9>"$LOCK"
-/usr/bin/flock 9 || { echo 'ERROR=unable to lock modem control channel'; exit 75; }
-trap cleanup EXIT INT TERM
+/usr/bin/timeout -k 1 30 /usr/bin/flock -x 9 || { echo 'ERROR=unable to lock modem control channel'; exit 75; }
 case "$action" in
 	get)
 		# Current and supported masks are authoritative.  The vendor list-lock
 		# API has no getter, so also report our persisted requested list.
-		printf '0\n19\n0\n19\n1\n54\n55\n1\n-1\n' | run_sample
+		progress reading
+		{ printf '0\n'; snapshot_tail; } | run_sample
+		rc=$?; [ "$rc" -eq 0 ] || exit "$rc"
 		report_state
 		;;
 
  reset-all)
   begin_transaction || exit $?
-  output="$(printf '0\n44\n0\n20\n2\n3\n17\n4\n18\n3\n55\n54\n1\n-1\n' | run_sample)";rc=$?
+  output="$({ printf '0\n44\n0\n20\n2\n3\n17\n4\n18\n3\n'; snapshot_tail; } | run_sample)";rc=$?
   printf '%s\n' "$output"
   for label in 'set cell arfcn list lock success!' 'set or restore band success!' 'set network success!' 'set nr disable mode success!';do
    printf '%s\n' "$output" | grep -Fq "$label" || rc=5
   done
   if [ "$rc" -eq 0 ];then
-   verified="$(verify_bands "$(printf '%s' "$LTE_ALLOWED" | tr ' ' ',')" "$(printf '%s' "$NR_ALLOWED" | tr ' ' ',')")";rc=$?
+   verified="$(verify_bands "$(printf '%s' "$LTE_ALLOWED" | tr ' ' ',')" "$(printf '%s' "$NR_ALLOWED" | tr ' ' ',')" "$output")";rc=$?
   fi
   end_transaction "$rc";rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
@@ -237,13 +257,13 @@ case "$action" in
     nsa) nw=3; disable=2; expected=QL_NW_MODE_LTE_NR5G; label=DISABLE_SA;;
     *) die 'invalid network mode';;
    esac
-   sequence="0\n17\n$nw\n18\n$disable\n55\n54\n1\n-1\n"
+   sequence="0\n17\n$nw\n18\n$disable\n"
   else
    case "$mode" in 1) disable=3;label=NEITHER_IS_DISABLED;;0) disable=1;label=DISABLE_NSA;;*) die 'invalid EN-DC policy';;esac
-   sequence="0\n18\n$disable\n54\n1\n-1\n"
+   sequence="0\n18\n$disable\n"
   fi
   begin_transaction || exit $?
-  output="$(printf '%b' "$sequence" | run_sample)"; rc=$?
+  output="$({ printf '%b' "$sequence"; snapshot_tail; } | run_sample)"; rc=$?
   printf '%s\n' "$output"
   [ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set nr disable mode success!' || rc=5
   actual_disable="$(printf '%s\n' "$output" | sed -n '/The current NR Disable Mode:/{n;p;}' | tr -d '\r')"
@@ -267,12 +287,12 @@ case "$action" in
 			band_lines "$lte"
 			printf '20\n1\n2\n'
 			band_lines "$nr"
-			printf '1\n-1\n'
+			snapshot_tail
 		} | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$output" | grep -Fc 'set or restore band success!')" -ge 2 ] || rc=5
 		if [ "$rc" -eq 0 ]; then
-			verified="$(verify_bands "$lte" "$nr")"; rc=$?
+			verified="$(verify_bands "$lte" "$nr" "$output")"; rc=$?
 			printf '%s\n' "$verified"
 		fi
 		end_transaction "$rc"; rc=$?
@@ -281,11 +301,11 @@ case "$action" in
 		;;
 	reset-bands)
 		begin_transaction || exit $?
-		output="$(printf '0\n20\n2\n3\n1\n-1\n' | run_sample)"; rc=$?
+		output="$({ printf '0\n20\n2\n3\n'; snapshot_tail; } | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set or restore band success!' || rc=5
 		if [ "$rc" -eq 0 ]; then
-			verified="$(verify_bands "$(printf '%s' "$LTE_ALLOWED" | tr ' ' ',')" "$(printf '%s' "$NR_ALLOWED" | tr ' ' ',')")"; rc=$?
+			verified="$(verify_bands "$(printf '%s' "$LTE_ALLOWED" | tr ' ' ',')" "$(printf '%s' "$NR_ALLOWED" | tr ' ' ',')" "$output")"; rc=$?
 			printf '%s\n' "$verified"
 		fi
 		end_transaction "$rc"; rc=$?
@@ -305,11 +325,11 @@ case "$action" in
 		# Match the official firmware: restore band mask, then program the
 		# list-lock API (one LTE or NR entry; 65535 means ARFCN-only).
 		if [ "$rat" = lte ]; then
-			sequence="0\n44\n0\n20\n2\n3\n44\n1\n1\n$arfcn\n$pci\n0\n1\n-1\n"
+			sequence="0\n44\n0\n20\n2\n3\n44\n1\n1\n$arfcn\n$pci\n0\n"
 		else
-			sequence="0\n44\n0\n20\n2\n3\n44\n1\n0\n1\n$arfcn\n$pci\n$band\n1\n-1\n"
+			sequence="0\n44\n0\n20\n2\n3\n44\n1\n0\n1\n$arfcn\n$pci\n$band\n"
 		fi
-		output="$(printf '%b' "$sequence" | run_sample)"; rc=$?
+		output="$({ printf '%b' "$sequence"; snapshot_tail; } | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set cell arfcn list lock success!' || rc=5
 		restore_network "$rc"; rc=$?
@@ -322,7 +342,7 @@ case "$action" in
 		;;
 	clear-cell)
 		begin_transaction || exit $?
-		output="$(printf '0\n44\n0\n1\n-1\n' | run_sample)"; rc=$?
+		output="$({ printf '0\n44\n0\n'; snapshot_tail; } | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set cell arfcn list lock success!' || rc=5
 		end_transaction "$rc"; rc=$?

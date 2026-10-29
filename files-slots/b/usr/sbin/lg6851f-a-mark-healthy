@@ -1,0 +1,44 @@
+#!/bin/sh
+# B-only boot acknowledgement (historical filename retained) for this device's Quectel bootctrl layout.
+set -eu
+[ "${1:-}" = '--now' ] || sleep 60
+grep -qw 'bootslot=b' /proc/cmdline || exit 0
+grep -qw 'root=/dev/mmcblk0p39' /proc/cmdline || exit 1
+grep -qx 'PARTNAME=misc' /sys/class/block/mmcblk0p1/uevent || exit 1
+[ "$(cat /sys/class/block/mmcblk0p1/size)" = 1024 ] || exit 1
+ubus call network.interface.lan status | grep -q '"up": true' || exit 1
+if [ -e /tmp/lg6851f-vendor618-active ]; then
+  # Reuse the exact UCI -> native BSS mapping used by setup.
+  plan=$(timeout -k 1 5 ucode /usr/share/ucode/lg6851f/boot-wifi-plan.uc) || exit 1
+  for iface in $plan; do
+    case "$iface" in ra[0-7]|rai[0-7]) ;; *) exit 1;; esac
+    [ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] || exit 1
+    [ "$(readlink -f "/sys/class/net/$iface/master")" = /sys/devices/virtual/net/br-lan ] || exit 1
+    timeout -k 1 3 ubus call hostapd.$iface get_status | grep -q '"status": "ENABLED"' || exit 1
+    iw dev "$iface" info | grep -q 'type AP' || exit 1
+  done
+else
+  ubus call network.wireless status | grep -q '"up": true' || exit 1
+fi
+[ "$(dd if=/dev/mmcblk0p1 bs=1 skip=2052 count=4 2>/dev/null)" = BCAB ] || exit 1
+before="$(dd if=/dev/mmcblk0p1 bs=1 skip=2060 count=10 2>/dev/null | hexdump -v -e '1/1 "%02x"')"
+[ "${#before}" = 20 ] || exit 1
+# Preserve both priorities, both success flags and every A byte.
+expected="$(printf '%s' "$before" | cut -c1-12)00$(printf '%s' "$before" | cut -c15-20)"
+if [ "$before" != "$expected" ]; then
+  old=/tmp/lg6851f-b-retry-before.$$
+  dd if=/dev/mmcblk0p1 of="$old" bs=1 skip=2066 count=1 2>/dev/null
+  printf '\000' | dd of=/dev/mmcblk0p1 bs=1 seek=2066 count=1 conv=notrunc 2>/dev/null
+  sync
+  after="$(dd if=/dev/mmcblk0p1 bs=1 skip=2060 count=10 2>/dev/null | hexdump -v -e '1/1 "%02x"')"
+  if [ "$after" != "$expected" ]; then
+    dd if="$old" of=/dev/mmcblk0p1 bs=1 seek=2066 count=1 conv=notrunc 2>/dev/null
+    sync
+    rm -f "$old"
+    logger -t lg6851f-b-boot-ok 'B retry acknowledgement failed; original retry byte restored'
+    exit 1
+  fi
+  rm -f "$old"
+fi
+logger -t lg6851f-b-boot-ok "B LAN/Wi-Fi ready; retry reset; bootctrl=$expected"
+printf 'B_BOOT_ACK_OK before=%s after=%s\n' "$before" "$expected"

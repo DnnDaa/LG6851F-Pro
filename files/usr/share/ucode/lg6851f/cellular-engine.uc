@@ -59,7 +59,7 @@ function traffic_snapshot() {
  // slow modem query. Hardware-accelerated traffic must use CCMNI, not LAN.
  let cache={},entry=null;
  try{cache=read_json('/tmp/fiberhomedash.live.json',{});}catch(e){}
- if(cache.mobile_if==name && now-C.number(cache.ts,0)<=20)entry=cache.counters?.[name];
+ entry=C.cached_counters(cache,name,now);
  if(entry){result.rx=C.number(entry.rx,0);result.tx=C.number(entry.tx,0);result.valid=true;}
  else for(let line in split(readfile('/proc/net/dev')??'','\n')) {
   let m=match(line,/^\s*([^:]+):\s*(.*)$/);if(!m || trim(m[1])!=name)continue;
@@ -80,27 +80,29 @@ export function traffic_get() {
 }
 function enforce_cap(db,date,config) {
  if(!date)return;
- let summary=C.traffic_summary(db,date,config),cycle=summary.cycle.start;
+ // No cap and no previously enforced cutoff: no history work is needed.
+ if(config.cap_bytes<=0 && !db.cut_cycle)return;
+ let summary=C.traffic_current(db,date,config),cycle=summary.cycle.start;
  // Only restore data that this feature itself disabled; never undo a manual
  // user disconnect, and never repeatedly toggle the modem at the cap.
  if(db.cut_cycle && (db.cut_cycle!=cycle || !config.cut_enabled || summary.cap.level!='over')) {
-  let r=capture(['/sbin/ifup','modem5g'],5);if(r.code==0)db.cut_cycle=null;
+  let r=capture(['/sbin/ifup','modem5g'],5);if(r.code==0){db.cut_cycle=null;db.dirty=true;}
  }
  if(config.cut_enabled && summary.cap.level=='over' && !db.cut_cycle) {
-  let r=capture(['/sbin/ifdown','modem5g'],5);if(r.code==0)db.cut_cycle=cycle;
+  let r=capture(['/sbin/ifdown','modem5g'],5);if(r.code==0){db.cut_cycle=cycle;db.dirty=true;}
  }
  let warning=summary.cap.level=='warn'||summary.cap.level=='over'?cycle+':'+summary.cap.level:null;
  if(warning && db.notified!=warning) {
   capture(['/usr/bin/logger','-t','lg6851f-traffic','Cellular data usage '+summary.cap.level+': '+summary.cycle.used+' / '+summary.cap.bytes],3);
-  db.notified=warning;
+  db.notified=warning;db.dirty=true;
  }
 }
 export function traffic_tick(flush) {
  return with_lock('traffic',function(){
-  let db=traffic_db(),sample=traffic_snapshot(),before=sprintf('%J',db.days);
+  let db=traffic_db(),sample=traffic_snapshot();
   C.traffic_sample(db,sample);db.available=sample.valid;db.updated=sample.now;
   enforce_cap(db,sample.date,settings());
- let changed=db.dirty || before!=sprintf('%J',db.days) || db.pending.rx>0 || db.pending.tx>0;
+ let changed=db.dirty || db.pending.rx>0 || db.pending.tx>0;
   let mono=clock(true)[0];
   if(flush || db.checkpoint_boot!=sample.boot || mono-C.number(db.checkpoint_mono,0)>=1800) {
    if(changed || db.checkpoint_boot!=sample.boot || flush){

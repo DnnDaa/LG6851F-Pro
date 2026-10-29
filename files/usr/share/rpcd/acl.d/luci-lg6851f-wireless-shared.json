@@ -1,0 +1,12 @@
+{
+  "luci-mod-network-config": {
+    "description": "Read the shared wireless-management snapshot",
+    "read": {
+      "ubus": {
+        "lg6851f.wireless": [
+          "status"
+        ]
+      }
+    }
+  }
+}

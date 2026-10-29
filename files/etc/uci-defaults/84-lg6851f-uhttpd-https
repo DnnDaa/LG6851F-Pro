@@ -1,0 +1,10 @@
+#!/bin/sh
+
+if [ ! -s /etc/uhttpd.crt ] || [ ! -s /etc/uhttpd.key ]; then
+	uci -q delete uhttpd.main.listen_https
+	uci -q delete uhttpd.main.cert
+	uci -q delete uhttpd.main.key
+	uci commit uhttpd
+fi
+
+exit 0

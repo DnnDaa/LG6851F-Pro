@@ -1,0 +1,17 @@
+#!/bin/sh
+# On-demand only; all state is in tmpfs. Never reload or stop an AP.
+umask 077
+case "$1" in radio0|radio1) ;; *) exit 2;; esac
+case "$2" in ''|*[!0-9-]*) exit 2;; esac
+exec 8>"/tmp/lg6851f-channel-$1.worker-lock"
+flock -n 8 || exit 0
+mkdir -p /var/lock
+# Share the existing configuration/sampler exclusion. Keep fd9 in children,
+# so an uninterruptible driver operation cannot admit another driver reader.
+exec 9>/var/lock/lg6851f-radio-control.lock
+if ! /usr/bin/timeout -k 2 15 flock -x 9; then
+ ucode /usr/share/rpcd/ucode/lg6851f.scan busy "$1" "$2"
+ exit 0
+fi
+ucode /usr/share/rpcd/ucode/lg6851f.scan run "$1" "$2"
+exit $?

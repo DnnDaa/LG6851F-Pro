@@ -1,49 +1,73 @@
 #!/bin/sh
-case "$(cat /sys/devices/system/cpu/online 2>/dev/null)" in
- 0-3) ;;
- *) exit 0;;
+# Cover every BSS. A hotplug event touches only its own device and queues.
+single=
+case "${1:-}" in
+ '') [ "$#" = 0 ] || exit 2;;
+ --interface)
+  [ "$#" = 2 ] || exit 2
+  case "$2" in ''|*[!A-Za-z0-9_.:-]*) exit 2;; esac
+  single=$2;;
+ *) exit 2;;
 esac
+IFS= read -r online < /sys/devices/system/cpu/online || exit 0
+[ "$online" = 0-3 ] || exit 0
 result=0
-pin_irq() {
- local name="$1" mask="$2" irq current
- for irq in $(awk -v name="$name" '$NF == name {sub(/:$/, "", $1); print $1}' /proc/interrupts); do
-  [ -w "/proc/irq/$irq/smp_affinity" ] || continue
-  current=; IFS= read -r current < "/proc/irq/$irq/smp_affinity"
-  case "$current" in "$mask"|0000000"$mask")continue;;esac
-  printf '%s' "$mask" > "/proc/irq/$irq/smp_affinity" || result=1
+wifi_devs=
+if [ -n "$single" ]; then
+ if [ -e "/sys/class/net/$single/phy80211" ]; then
+  wifi_devs=$single
+  /usr/sbin/lg6851f-net-affinity --wifi-irqs || result=1
+ else
+  case "$single" in eth0|eth1)
+   /usr/sbin/lg6851f-net-affinity --interface "$single" || result=1;;
+   *) exit 0;;
+  esac
+ fi
+ devices=$single
+else
+ /usr/sbin/lg6851f-net-affinity --wifi-irqs || result=1
+ for node in /sys/class/net/*/phy80211; do
+  [ -e "$node" ] || continue
+  dev=${node%/phy80211}; dev=${dev##*/}
+  wifi_devs="$wifi_devs $dev"
  done
-}
-pin_irq mt7990-wed 2
-pin_irq mt7991-wed 4
-for dev in ra0 rai0; do
- case "$dev" in ra0) mask=2;; rai0) mask=8;; esac
- for queue in /sys/class/net/"$dev"/queues/rx-*; do
-  [ -w "$queue/rps_cpus" ] || continue
-  current=; IFS= read -r current < "$queue/rps_cpus"
-  case "$current" in "$mask"|0000000"$mask")continue;;esac
-  printf '%s' "$mask" > "$queue/rps_cpus" || result=1
+ devices="$wifi_devs eth0 eth1 br-lan"
+fi
+for dev in $wifi_devs; do
+ phy=$(readlink -f "/sys/class/net/$dev/phy80211") || { result=1; continue; }
+ case "${phy##*/}" in phy0) mask=2;; phy1) mask=8;; *) mask=f;; esac
+ for queue in /sys/class/net/"$dev"/queues/rx-*/rps_cpus; do
+  [ -w "$queue" ] || continue
+  current=; IFS= read -r current < "$queue"
+  case "$current" in "$mask"|0000000"$mask") continue;; esac
+  printf '%s' "$mask" > "$queue" || result=1
  done
 done
-
 ethtool=$(command -v ethtool)
 [ -n "$ethtool" ] || ethtool=/usr/sbin/ethtool
 if [ -x "$ethtool" ]; then
- for dev in ra0 rai0 eth0 eth1 br-lan; do
+ for dev in $devices; do
   [ -d "/sys/class/net/$dev" ] || continue
-  features=$("$ethtool" -k "$dev" 2>/dev/null)
-  feature=$(printf '%s\n' "$features" | grep '^generic-receive-offload:')
-  case "$feature" in
-   *'[fixed]'*|'') ;;
-   *': off'*) "$ethtool" -K "$dev" gro on >/dev/null 2>&1 || result=1;;
-  esac
-  feature=$(printf '%s\n' "$features" | grep '^rx-gro-list:')
-  case "$feature" in
-   *'[fixed]'*|'') ;;
-   *': on'*) "$ethtool" -K "$dev" rx-gro-list off >/dev/null 2>&1 || result=1;;
-  esac
+  features=$("$ethtool" -k "$dev" 2>/dev/null) || { result=1; continue; }
+  changes=
+  # Shell parsing avoids two grep processes per BSS. Preserve fixed flags.
+  while read -r key state flags; do
+   case "$flags" in *'[fixed]'*) continue;; esac
+   case "$key $state" in
+    'generic-receive-offload: off') changes="$changes gro on";;
+    'rx-gro-list: on') changes="$changes rx-gro-list off";;
+   esac
+  done <<EOF
+$features
+EOF
+  [ -z "$changes" ] || "$ethtool" -K "$dev" $changes >/dev/null 2>&1 || result=1
  done
 else
  result=1
 fi
-/usr/sbin/lg6851f-local-tcp-fq || result=1
+if [ -n "$single" ]; then
+ /usr/sbin/lg6851f-qdisc --interface "$single" || result=1
+else
+ /usr/sbin/lg6851f-qdisc || result=1
+fi
 exit "$result"

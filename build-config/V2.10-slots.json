@@ -1,0 +1,18 @@
+{
+  "version": "V2.10",
+  "systemfix": 94,
+  "default_source_slot": "b",
+  "slot_overlay_files": [
+    "etc/lg6851f-build.json",
+    "lib/apk/db/installed",
+    "lib/upgrade/platform.sh",
+    "usr/sbin/lg6851f-a-mark-healthy",
+    "usr/sbin/lg6851f-vendor618-start",
+    "etc/uci-defaults/99-lg6851f-private-board-56",
+    "etc/uci-defaults/99-lg6851f-core-modes-57"
+  ],
+  "kernel": "6.18.44",
+  "full_runtime_asset": "release-runtime/public-b-assembled-root.tar",
+  "a_delta": "files-slots/a",
+  "cold_boot_tested": false
+}

@@ -1,17 +1,19 @@
+
 config cpufreq 'main'
 	option mode 'balanced'
 
 config profile 'quiet'
 	option governor 'schedutil'
 	option min_freq '430000'
-	option max_freq '1256000'
+	option max_freq '902000'
 
 config profile 'balanced'
 	option governor 'schedutil'
-	option min_freq '430000'
-	option max_freq '1728000'
+	option min_freq '1374000'
+	option max_freq '2200000'
 
 config profile 'performance'
 	option governor 'performance'
 	option min_freq '430000'
 	option max_freq '2200000'
+

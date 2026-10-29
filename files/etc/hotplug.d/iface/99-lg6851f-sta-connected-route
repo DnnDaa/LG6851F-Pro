@@ -1,0 +1,46 @@
+#!/bin/sh
+
+case "$ACTION" in
+	ifup|ifupdate) ;;
+	*) exit 0 ;;
+esac
+
+case "$INTERFACE" in
+	''|*[!A-Za-z0-9_]*) exit 0 ;;
+esac
+
+. /lib/functions/network.sh
+
+network_get_device device "$INTERFACE" || exit 0
+case "$device" in
+	apcli[0-9]*|apclii[0-9]*) ;;
+	*) exit 0 ;;
+esac
+
+network_get_subnet subnet "$INTERFACE" || exit 0
+case "$subnet" in
+	''|*[!0-9./]*) exit 0 ;;
+esac
+
+eval "$(ipcalc.sh "$subnet")"
+[ -n "$NETWORK" ] && [ -n "$PREFIX" ] || exit 0
+target="$NETWORK/$PREFIX"
+
+metric="$(uci -q get "network.$INTERFACE.metric")"
+case "$metric" in
+	''|*[!0-9]*) metric=20 ;;
+esac
+
+current="$(ip -4 route show exact "$target" 2>/dev/null)"
+case "$current" in
+	*"scope link"*)
+		case "$current" in
+			*"via "*) ;;
+			*) exit 0 ;;
+		esac
+		;;
+esac
+
+ip route replace "$target" dev "$device" scope link metric "$metric" || exit 1
+logger -t lg6851f-sta-route \
+	"installed connected route $target dev $device metric $metric"

@@ -1,0 +1,39 @@
+#!/bin/sh
+umask 077
+exec 8>/tmp/fiberhomedash.supervisor.lock
+flock -n 8 || exit 0
+mono() { local seconds rest; read -r seconds rest </proc/uptime; MONO=${seconds%.*}; }
+heartbeat() { local stamp; mono; stamp=$MONO; [ $((stamp-heartbeat_last)) -ge 5 ] || return 0; heartbeat_last=$stamp; printf '%s %s\n' "$$" "$stamp" >/tmp/fiberhomedash.sampler.new && mv -f /tmp/fiberhomedash.sampler.new /tmp/fiberhomedash.sampler; }
+heartbeat_last=-10
+child=
+trap '[ -z "$child" ] || kill -TERM "$child" 2>/dev/null; exit 0' TERM INT
+while :; do
+ mono; now=$MONO; watch=0; radio=0
+ read -r watch </tmp/fiberhomedash.watch 2>/dev/null || :
+ read -r radio </tmp/fiberhomedash.radio-watch 2>/dev/null || :
+ case "$watch" in ''|*[!0-9.]*) watch=0;; esac
+ case "$radio" in ''|*[!0-9.]*) radio=0;; esac
+ watch=${watch%.*}; radio=${radio%.*}
+ [ "$watch" -ge "$radio" ] || watch=$radio
+ [ "$now" -ge "$watch" ] && [ $((now-watch)) -le 20 ] || break
+ heartbeat
+ ucode -g 4096 /usr/libexec/lg6851f-dashboard.ucb loop 8>&- &
+ child=$!; started=$now; terminated=0
+ while kill -0 "$child" 2>/dev/null; do
+  heartbeat
+  mono; progress_pid=0; progress_time=$started
+  read -r progress_pid progress_time </tmp/fiberhomedash.progress 2>/dev/null || :
+  case "$progress_time" in ''|*[!0-9.]*) progress_time=$started;; esac
+  [ "$progress_pid" = "$child" ] || progress_time=$started
+  progress_time=${progress_time%.*}
+  if [ "$MONO" -lt "$progress_time" ] || [ $((MONO-progress_time)) -gt 12 ]; then
+   if [ "$terminated" -eq 0 ]; then kill -TERM "$child" 2>/dev/null; terminated=$MONO
+   elif [ $((MONO-terminated)) -ge 2 ]; then kill -KILL "$child" 2>/dev/null; fi
+  fi
+  sleep 2
+ done
+ wait "$child"; rc=$?; child=
+ case "$rc" in 0) state=ok;; *) state=timeout_or_unavailable;; esac
+ printf '%s\n' "$state" >/tmp/fiberhomedash.sampler-health
+ sleep 1
+done

@@ -1,0 +1,121 @@
+/* LG6851F shared UI rhythm. Static CSS only; no polling or resident service. */
+:where(#maincontent,#view){--lg-ui-radius:12px;--lg-ui-gap:12px;--lg-ui-section:24px}
+:where(#maincontent,#view) :is(h2,h3,h4){font-family:inherit;line-height:1.5;text-transform:none;letter-spacing:normal}
+:where(#maincontent,#view) :is(.cbi-button,.btn){font-family:inherit;line-height:1.5;min-height:34px;max-width:100%;box-sizing:border-box}
+:where(#maincontent,#view) :is(.cbi-value-description,.cbi-section-descr){line-height:1.7;overflow-wrap:anywhere;white-space:normal}
+:where(#maincontent,#view) .cbi-value-description{margin-top:6px}
+:where(#maincontent,#view) :is(.cbi-section,.cbi-section-node){border-radius:var(--lg-ui-radius,12px)}
+:where(#maincontent,#view) :is(input,select,textarea){max-width:100%;box-sizing:border-box}
+:where(#maincontent,#view) :is(.cbi-section-table,.table) :is(th,td,.th,.td){font-variant-numeric:tabular-nums;line-height:1.6;vertical-align:middle}
+.lg-control.lg-control .at-chips button{min-height:24px;border-radius:999px;padding:2px 8px;font-size:12px}
+.lg-control.lg-control .sms-meta button{min-height:24px;padding:0 6px;font-size:14px}
+.lg-control.lg-control .cell-table-wrap :is(td,th){white-space:nowrap}
+/* Preserve theme colors and LuCI form/tab behavior. No global fixed colors. */
+.lg-control.lg-control,.cpu-page.cpu-page,.fhd.fhd-dashboard{font-family:inherit;font-size:14px;line-height:1.6;min-width:0;max-width:100%}
+.lg-control.lg-control:not(.lg-cellular){padding:18px;border-radius:12px;background:var(--lg-panel)}
+.lg-control.lg-control h2{font-size:20px;line-height:1.5;margin:0 0 18px;overflow-wrap:anywhere}
+.lg-control.lg-control .lg-section{margin:24px 0;padding:0;border:0;background:transparent;box-shadow:none}
+.lg-control.lg-control .lg-section>h3{line-height:1.6;margin:0 0 12px}
+.lg-control.lg-control :is(.lg-row,.lg-footer){gap:10px;align-items:center}
+.lg-control.lg-control button,.cpu-page.cpu-page .cpu-preset{min-height:36px;border-radius:8px;padding:7px 14px;font-size:13px;line-height:1.5;white-space:normal;max-width:100%}
+.lg-control.lg-control :is(p.lg-muted,.cell-note){display:block;line-height:1.7;white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.lg-control.lg-control .lg-section>p.lg-muted{margin:12px 0 0}
+.lg-control.lg-control .lg-section>p.lg-muted+p.lg-muted{margin-top:8px}
+.lg-control.lg-control :is(.lg-hero,.lg-stat,.cell-card),.cpu-page.cpu-page .cpu-card,.fhd.fhd-dashboard .fhd-card{border-radius:12px}
+.lg-control.lg-control :is(.lg-table,.cell-table-wrap),.cpu-page.cpu-page .cpu-table-wrap{max-width:100%;min-width:0}
+.lg-control.lg-control :is(.lg-cell-table,.cell-table-wrap table) :is(td,th),.cpu-page.cpu-page .cpu-table :is(td,th){padding:9px 10px!important;line-height:1.6;vertical-align:middle}
+.lg-control.lg-control .lg-table{overflow-x:auto;overscroll-behavior-x:contain}
+.lg-control.lg-control :is(.lg-status,.lg-form){margin-top:16px;margin-bottom:16px}
+.lg-control.lg-control .lg-footer{margin-top:24px;padding-top:16px;justify-content:flex-end;flex-wrap:wrap}
+.lg-control.lg-control .lg-cell-measurement{margin-top:24px}
+.lg-control.lg-control .lg-cell-measurement>h3{margin:0 0 12px!important}
+.lg-control.lg-control .lg-cell-measurement>.lg-table{margin-top:0}
+.lg-control.lg-control :is(.lg-temp-inline,.lg-signal-value){display:flex;align-items:baseline;white-space:nowrap}
+.cpu-page.cpu-page .cpu-table{font-size:13px}.cpu-page.cpu-page .cpu-muted{font-size:12px;line-height:1.7}
+.fhd.fhd-dashboard .fhd-r{min-height:36px;line-height:1.6}
+.fhd.fhd-dashboard :is(.fhd-lease-box,.fhd-client-box){border-radius:10px}
+@media(max-width:700px){.lg-control.lg-control .lg-modes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.lg-control.lg-control .lg-modes button{min-width:0;width:100%}.lg-control.lg-control:not(.lg-cellular){padding:14px}.lg-control.lg-control .lg-row{row-gap:10px}.lg-control.lg-control .lg-footer>*{flex:1 1 100px}.lg-control.lg-control .cell-setting{align-items:flex-start;flex-wrap:wrap}.lg-control.lg-control .cell-setting-actions{max-width:100%}}
+@media(max-width:420px){.lg-control.lg-control:not(.lg-cellular){padding:12px}.lg-control.lg-control :is(.lg-stat,.cell-card){padding:12px}.lg-control.lg-control .lg-row>button{max-width:100%}.lg-control.lg-control .lg-section>p.lg-muted{font-size:12px}.lg-control.lg-control :is(.lg-cell-table,.cell-table-wrap table) :is(td,th){padding:8px!important}}
+
+/* 74: menu labels stay horizontal; narrow desktop widths scroll the existing top menu. */
+header .nav{width:max-content;white-space:nowrap;flex-wrap:nowrap}
+header .nav>li{flex:0 0 auto}
+header .nav>li>.menu{white-space:nowrap;word-break:normal;overflow-wrap:normal}
+header :is(.brand,.cmdk-trigger,#indicators){flex-shrink:0}
+@media(min-width:48rem) and (max-width:70rem){
+ body[data-nav-type=mega-menu] header .nav{position:static;left:auto;translate:none;transform:none;flex:0 1 auto;min-width:0;max-width:calc(100% - 160px);margin-inline:12px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+ body[data-nav-type=mega-menu] header .nav::-webkit-scrollbar{display:none}
+ body[data-nav-type=mega-menu] header .nav>li>.menu{padding-inline:10px}
+}
+/* Shared station tables keep long device names readable without squeezing action buttons. */
+.lg-assoc-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.lg-assoc-scroll #wifi_assoclist_table{min-width:980px;margin-bottom:0}
+.lg-assoc-scroll #wifi_assoclist_table :is(th,.th){white-space:nowrap}
+.lg-assoc-scroll #wifi_assoclist_table :is(td,.td):first-child{min-width:10rem}
+.lg-assoc-scroll #wifi_assoclist_table :is(td,.td):nth-child(3){min-width:10rem;max-width:24rem;overflow-wrap:anywhere}
+.lg-assoc-scroll #wifi_assoclist_table :is(td,.td):nth-child(4){white-space:nowrap}
+.lg-assoc-scroll #wifi_assoclist_table :is(td,.td):nth-child(5){min-width:16rem}
+:where(#maincontent,#view) :is(.cbi-section-actions,.cbi-page-actions,.lg-footer) :is(button,.btn,.cbi-button){white-space:nowrap;flex-shrink:0}
+:where(#maincontent,#view) .cbi-section-actions{vertical-align:middle}
+.cpu-page .cpu-buttons{flex-wrap:wrap;align-items:center}
+
+/* 75: constrain all LuCI dialogs at intermediate widths as well as mobile. */
+#modal_overlay{box-sizing:border-box;padding:16px;overflow-x:hidden;overflow-y:auto}
+#modal_overlay>.modal{box-sizing:border-box;width:100%;max-width:min(64rem,100%);min-width:0;margin:0;max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;overflow-wrap:anywhere}
+#modal_overlay>.modal>*{min-width:0;max-width:100%;flex-shrink:0}
+#modal_overlay>.modal :is(p,li,label,code){overflow-wrap:anywhere;word-break:normal}
+#modal_overlay>.modal pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+#modal_overlay>.modal :is(input,select,textarea,.cbi-value-field,.cbi-dropdown){min-width:0;max-width:100%;box-sizing:border-box}
+#modal_overlay>.modal label.btn{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#modal_overlay>.modal label.btn input{flex-shrink:0}
+#modal_overlay>.modal>:is(.right,.left,.button-row){box-sizing:border-box;max-width:100%;flex-wrap:wrap;gap:8px}
+#modal_overlay>.modal>:is(.right,.button-row){position:sticky;bottom:0;z-index:1;background:var(--surface-overlay)}
+#modal_overlay>.modal :is(button,.btn,.cbi-button){max-width:100%;overflow-wrap:anywhere}
+@media(max-width:480px){#modal_overlay{padding:8px}#modal_overlay>.modal{max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px)}}
+
+/* 76: one layout threshold; header menu centered independently of logo/search. */
+@media(min-width:640px){
+ body[data-nav-type=mega-menu] header .header-content{height:56px;padding:12px 24px}
+ body[data-nav-type=mega-menu] header .navigation-controls{display:none}
+ body[data-nav-type=mega-menu] header .desktop-menu-container,body[data-nav-type=mega-menu] .desktop-menu-overlay{display:block}
+ body[data-nav-type=mega-menu] header .brand{flex:0 0 auto}
+ body[data-nav-type=mega-menu] header .nav{display:flex;position:absolute;left:50%;translate:-50% 0;transform:none;width:max-content;max-width:calc(100% - 280px);min-width:0;flex:none;margin:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;flex-wrap:nowrap;white-space:nowrap}
+ body[data-nav-type=mega-menu] header .nav>li>.menu{padding-inline:clamp(8px,1vw,14px);font-size:13px;white-space:nowrap}
+}
+@media(max-width:639px){
+ body[data-nav-type=mega-menu] header .nav{display:none}
+ body[data-nav-type=mega-menu] header .navigation-controls{display:flex}
+}
+body[data-nav-type=mega-menu] #maincontent:has(.fhd-dashboard){width:100%;padding-inline:clamp(12px,2.5vw,32px)}
+.fhd.fhd-dashboard.fhd-dashboard{container-type:normal}
+.fhd.fhd-dashboard.fhd-dashboard :is(.fhd-body,.fhd-hero){padding:16px}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-cols{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 24px}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-cols>*{min-width:0}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-charts,.fhd.fhd-dashboard.fhd-dashboard .fhd-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-kpis:has(#fhd-cpu){grid-template-columns:repeat(3,minmax(0,1fr))}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-kpi{min-width:0;overflow-wrap:anywhere}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-kpi>b{display:block}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols{grid-template-rows:auto auto;row-gap:0}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div{display:contents}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div:first-child>.fhd-rows{grid-area:1/1}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div:last-child>.fhd-rows{grid-area:1/2}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div:first-child>.fhd-lease-box{grid-area:2/1}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div:last-child>.fhd-lease-box{grid-area:2/2}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-ppe-row{grid-template-columns:minmax(140px,30%) minmax(0,1fr)}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-ppe-row>.fhd-k,.fhd.fhd-dashboard.fhd-dashboard .fhd-freq>.fhd-k{max-width:none;white-space:nowrap}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-hero{flex-wrap:nowrap}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-hero-l{flex:1 1 0}
+.fhd.fhd-dashboard.fhd-dashboard .fhd-hero-r{flex:0 0 auto;flex-direction:column;align-items:flex-end;text-align:right}
+@media(max-width:639px){
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-cols{grid-template-columns:minmax(0,1fr)}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols{grid-template-rows:none;row-gap:18px}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div{display:block}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-detail-cols>div>:is(.fhd-rows,.fhd-lease-box){grid-area:auto}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-ppe-row{grid-template-columns:minmax(0,1fr);gap:5px}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-hero{flex-wrap:wrap;gap:8px}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-hero-l{flex:1 1 100%}
+ .fhd.fhd-dashboard.fhd-dashboard .fhd-hero-r{flex:1 1 100%;flex-direction:row;justify-content:space-between;align-items:baseline;text-align:left}
+}
+
+/* 79: retain the desktop OpenWrt wordmark size across mobile breakpoints. */
+header .header-content .brand{font-size:1.25rem;line-height:1.4;white-space:nowrap}

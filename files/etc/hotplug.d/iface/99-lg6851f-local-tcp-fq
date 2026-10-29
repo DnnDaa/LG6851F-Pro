@@ -1,6 +1,6 @@
 #!/bin/sh
-case "$ACTION:$INTERFACE" in
- ifup:lan)
-  /usr/sbin/lg6851f-local-tcp-fq || logger -t lg6851f-local-tcp-fq 'Could not apply eth0 TX0 fq pacing'
+case "$ACTION" in
+ ifup|ifupdate)
+  /usr/sbin/lg6851f-qdisc || /usr/sbin/lg6851f-qdisc-retry --queue
  ;;
 esac

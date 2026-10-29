@@ -8,7 +8,12 @@
 
 var config = 'lg6851f-cpufreq';
 var labels = { quiet: '省电', balanced: '均衡', performance: '性能' };
-var getStatus = rpc.declare({ object: 'lg6851f.cpufreq', method: 'status', expect: {} });
+var callStatus = rpc.declare({ object: 'lg6851f.cpufreq', method: 'status', expect: {} });
+var statusFlight = null;
+function getStatus() {
+ if (!statusFlight) statusFlight = Promise.resolve().then(function(){ return callStatus(); }).finally(function(){ statusFlight = null; });
+ return statusFlight;
+}
 function mhz(v) { return v > 0 ? String(Math.round(v / 1000)) : '—'; }
 function words(v) { return String(v || '').trim().split(/\s+/).filter(Boolean); }
 function select(values, current, disabled, change) {
@@ -24,6 +29,8 @@ return view.extend({
 	load: function() { return Promise.all([ getStatus(), uci.load(config) ]); },
 	render: function(result) {
 		var self = this, data = result[0];
+        this._stopped = false;
+        var generation = this._renderGeneration = (this._renderGeneration || 0) + 1;
 		this.data = data;
 		this.mode = uci.get(config, 'main', 'mode') || 'balanced';
 		this.savedMode = this.mode;
@@ -72,7 +79,12 @@ return view.extend({
 		update();
 		this.updateStatus(data);
 		if (this.pollFn) poll.remove(this.pollFn);
-		this.pollFn = function() { return getStatus().then(function(s) { self.data = s; self.updateStatus(s); }); };
+		this.pollFn = function() {
+            if (self._stopped || document.hidden) return Promise.resolve();
+            return getStatus().then(function(s) {
+                if (!self._stopped && generation === self._renderGeneration) { self.data = s; self.updateStatus(s); }
+            }).catch(function() { /* Keep the last valid status on a failed read. */ });
+        };
 		poll.add(this.pollFn, 5);
 		var root = E('div', { 'class': 'cpu-page' }, [ E('link', {rel:'stylesheet',href:L.resource('lg6851f/control_v20261015_1.css')}), E('style', {}, css),
 			E('div', { 'class': 'cpu-card' }, [ E('p', { 'class': 'cpu-title' }, 'CPU 配置'),
@@ -105,6 +117,7 @@ return view.extend({
 	handleSaveApply: function(ev, mode) {
 		return this.handleSave(ev).then(function() { return ui.changes.apply(mode === '0'); });
 	},
+	unload: function() { this._stopped = true; this._renderGeneration = (this._renderGeneration || 0) + 1; if (this.pollFn) poll.remove(this.pollFn); this.pollFn = null; },
 	handleReset: function() {
 		var self = this;
 		return this.load().then(function(result) { return self.render(result); }).then(function(node) {
